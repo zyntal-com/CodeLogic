@@ -32,6 +32,11 @@ if (!clResult.Success || clResult.ShouldExit)
     return;
 }
 
+// ── Step 1b: Register libraries ───────────────────────────────────────────
+// Demo library with three named endpoints in one config section (shared with
+// the console demo). Edit it live via the /config endpoints.
+await Libraries.LoadAsync<CodeLogic.Demo.Shared.EndpointsLibrary>();
+
 // ── Step 2: Register the application ──────────────────────────────────────
 CodeLogic.CodeLogic.RegisterApplication(new WebDemoApplication());
 
@@ -77,6 +82,7 @@ HomeEndpoints.Map(app);
 HealthEndpoints.Map(app);
 EventEndpoints.Map(app);
 PluginEndpoints.Map(app);
+ConfigEndpoints.Map(app);
 
 // ── Step 7: Wire CodeLogic shutdown to ASP.NET host lifetime ─────────────
 // When the host stops (CTRL+C, SIGTERM, etc.), stop CodeLogic gracefully.

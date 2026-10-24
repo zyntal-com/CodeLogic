@@ -46,7 +46,11 @@ Add `CodeLogic.Development.json` to `.gitignore`.
   },
   "libraries": {
     "discoveryPattern": "CL.*",
-    "enableDependencyResolution": true
+    "enableDependencyResolution": true,
+    "configHotReload": {
+      "enabled": false,
+      "debounceMs": 500
+    }
   },
   "healthChecks": {
     "enabled": true,
@@ -97,6 +101,8 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 |----------|------|---------|-------------|
 | `discoveryPattern` | string | `"CL.*"` | Directory pattern used under `Libraries/` |
 | `enableDependencyResolution` | bool | `true` | Topologically sort libraries before startup |
+| `configHotReload.enabled` | bool | `false` | Watch `Libraries/*/config*.json` and reload a section when its file is edited (4.9.0+). Invalid edits are logged and ignored. See [Configuration › Watching config files](../Core/configuration.md#watching-config-files) |
+| `configHotReload.debounceMs` | int | `500` | Quiet period after the last file event before reloading |
 
 ### `healthChecks`
 
@@ -136,7 +142,11 @@ Add `CodeLogic.Development.json` to `.gitignore`.
   },
   "libraries": {
     "discoveryPattern": "CL.*",
-    "enableDependencyResolution": true
+    "enableDependencyResolution": true,
+    "configHotReload": {
+      "enabled": false,
+      "debounceMs": 500
+    }
   },
   "healthChecks": {
     "enabled": true,

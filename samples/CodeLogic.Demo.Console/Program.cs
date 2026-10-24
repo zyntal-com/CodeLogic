@@ -2,6 +2,7 @@ using CodeLogic;
 using CodeLogic.Demo.Console.Application;
 using CodeLogic.Demo.Console.Config;
 using CodeLogic.Demo.Console.Events;
+using CodeLogic.Demo.Shared;
 using CodeLogic.Demo.Console.Localization;
 using CodeLogic.Demo.Console.Plugins;
 using CodeLogic.Framework.Application.Plugins;
@@ -30,6 +31,9 @@ if (!initResult.Success || initResult.ShouldExit)
 // Example — uncomment when you have a CL.SQLite reference:
 //   await Libraries.LoadAsync<CL.SQLite.SQLiteLibrary>();
 //   await Libraries.LoadAsync<CL.Mail.MailLibrary>();
+//
+// In-process demo library showing live, per-instance config reload ([C] below).
+await Libraries.LoadAsync<EndpointsLibrary>();
 
 // ── Step 3: Register the application ──────────────────────────────────────
 CodeLogic.CodeLogic.RegisterApplication(new DemoApplication());
@@ -102,6 +106,7 @@ Console.WriteLine("  [W] Simulate work   (triggers GreetingPlugin + StatsPlugin)
 Console.WriteLine("  [L] Log all levels  (shows what writes to disk vs filtered)");
 Console.WriteLine("  [H] Health report   (includes plugin health)");
 Console.WriteLine("  [P] Plugin status   (list loaded plugins)");
+Console.WriteLine("  [C] Change config   (moves the 'Billing' endpoint; others stay connected)");
 Console.WriteLine("  [Q] Quit");
 Console.WriteLine();
 
@@ -144,6 +149,23 @@ while (running)
         case ConsoleKey.H:
             var health = await CodeLogic.CodeLogic.GetHealthAsync();
             Console.WriteLine(health.ToConsoleString());
+            break;
+
+        case ConsoleKey.C:
+            // Change ONE endpoint through the admin API. EndpointsLibrary diffs old/new
+            // and reconnects only "Billing"; Orders and Search are left untouched.
+            // (Payload starts from defaults to keep the demo short; a real UI edits the current values.)
+            var schema = Libraries.GetConfigSchema("CL.DemoEndpoints", "endpoints", includeSecrets: true);
+            var current = schema?.Fields.FirstOrDefault(f => f.Path == "endpoints.Billing.url")?.CurrentValue as string;
+            var nextUrl = current == "https://billing.local" ? "https://billing-v2.local" : "https://billing.local";
+            var endpoints = new EndpointsConfig();
+            endpoints.Endpoints["Billing"].Url = nextUrl;
+            var json = System.Text.Json.JsonSerializer.Serialize(endpoints,
+                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+
+            Console.WriteLine($"\n  Moving Billing → {nextUrl}");
+            var result = await Libraries.UpdateConfigAsync("CL.DemoEndpoints", "endpoints", json, changedBy: "demo");
+            Console.WriteLine($"  Result: {result}");
             break;
 
         case ConsoleKey.P:

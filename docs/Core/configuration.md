@@ -135,28 +135,68 @@ await context.Configuration.SaveAsync(config);
 
 ### Hot-reloading
 
-Some config values can be safely reloaded at runtime without a restart:
-
 ```csharp
-// Safe to reload: log levels, intervals, pool sizes, thresholds
-await context.Configuration.ReloadAsync<DatabaseConfig>();
-
-// NOT safe to reload without a restart: connection strings, paths, ports
-// (the service using them is already initialized with the old value)
+await context.Configuration.ReloadAsync<DatabaseConfig>();   // one section
+await context.Configuration.ReloadAllAsync();                // all sections (all-or-nothing)
 ```
 
-Subscribe to `ConfigReloadedEvent` to react to reloads:
+A reload **replaces** the in-memory instance. Code that stored the result of `Get<T>()` keeps the old values — call `Get<T>()` again, or react to the change (below). Runtime overrides (`Libraries.OverrideConfig`) are re-applied on every reload and update, and are never written to the file.
+
+Every save / update / reload / reset raises `ConfigChanged` with the section, the kind of change, and `OldValue` / `NewValue` snapshots. Notifications are delivered in commit order, and the call that made the change waits for them.
+
+### Live reload for libraries (4.9.0+)
+
+A library opts in to applying changes while running by implementing `IConfigReloadable` next to `ILibrary`:
 
 ```csharp
-context.Events.Subscribe<ConfigReloadedEvent>(e =>
+public sealed class MySQL2Library : ILibrary, IConfigReloadable
 {
-    if (e.ComponentId == "CL.MyLibrary" && e.ConfigType == typeof(DatabaseConfig))
+    public async Task OnConfigChangedAsync(LibraryContext ctx, ConfigChangedEventArgs change, CancellationToken ct)
     {
-        var newConfig = context.Configuration.Get<DatabaseConfig>();
-        ApplyNewPoolSize(newConfig.MaxConnections);
+        if (change.SectionName != "mysql") return;
+
+        var diff = ConfigDiff.Keyed(
+            change.GetOld<DatabaseConfiguration>()?.Databases,
+            change.GetNew<DatabaseConfiguration>()!.Databases);
+
+        foreach (var (id, _) in diff.Removed)        await RemoveDatabaseAsync(id, ct);
+        foreach (var (id, c) in diff.Changed)        await ReplaceDatabaseAsync(id, c.New, ct);
+        foreach (var (id, cfg) in diff.Added)        await AddDatabaseAsync(id, cfg, ct);
+        // diff.Unchanged → untouched; those connections stay open
     }
-});
+}
 ```
+
+- Called for `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, `Libraries.ResetConfigAsync`, the file watcher, and the library's own `SaveAsync` — only once the library is initialized.
+- `ConfigDiff.Keyed` compares keyed instances by value; `ConfigDiff.ChangedProperties` and `ConfigDiff.RequiresRestart` tell you whether a change needs a rebuild or only a knob update.
+- Throwing from `OnConfigChangedAsync` reports the change as **saved but not applied**: the file is kept, `ConfigApplyResult.ApplyError` is returned (or `ConfigApplyException` is thrown from `SaveAsync`), `ConfigApplyFailedEvent` is published, and the library reports Degraded health until a later change applies.
+- Libraries that don't implement the interface still get the change persisted; a warning is logged when fields marked `RequiresRestart` changed.
+
+Admin UIs use `ConfigApplyResult`:
+
+```csharp
+var result = await Libraries.UpdateConfigAsync("CL.MySQL2", "mysql", json, changedBy: user);
+if (!result.IsValid)        ShowErrors(result.Errors);        // nothing saved
+else if (!result.Applied)   ShowWarning(result.ApplyError!);  // saved, not applied
+```
+
+Schema fields set by a runtime override have `ConfigField.IsOverridden = true`.
+
+### Watching config files
+
+Edits to `Libraries/*/config*.json` can be picked up automatically. Opt in via `CodeLogic.json`:
+
+```json
+{
+  "libraries": {
+    "configHotReload": { "enabled": true, "debounceMs": 500 }
+  }
+}
+```
+
+Invalid edits are logged and the current values kept. Writes made by CodeLogic itself do not trigger a reload. Files are written atomically (write-then-rename).
+
+Framework events: `ConfigChangedEvent` (every change), `ConfigReloadedEvent` (reloads), `ConfigApplyFailedEvent`.
 
 ---
 

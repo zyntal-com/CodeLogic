@@ -144,10 +144,11 @@ public static class Libraries
     }
 
     /// <summary>
-    /// Update a library's config section from a raw JSON payload. Returns the
-    /// validation result. File is untouched when validation fails.
+    /// Update a library's config section from a raw JSON payload. File is untouched when
+    /// validation fails; valid changes are persisted and applied live by libraries that
+    /// implement <see cref="IConfigReloadable"/>.
     /// </summary>
-    public static Task<ConfigValidationResult> UpdateConfigAsync(
+    public static Task<ConfigApplyResult> UpdateConfigAsync(
         string libraryId,
         string sectionName,
         string json,
@@ -159,8 +160,8 @@ public static class Libraries
         return mgr.UpdateConfigAsync(libraryId, sectionName, json, changedBy, ct);
     }
 
-    /// <summary>Reset a library's config section to defaults.</summary>
-    public static Task ResetConfigAsync(
+    /// <summary>Reset a library's config section to defaults and apply it.</summary>
+    public static Task<ConfigApplyResult> ResetConfigAsync(
         string libraryId,
         string sectionName,
         string? changedBy = null,
@@ -169,5 +170,20 @@ public static class Libraries
         var mgr = CodeLogic.GetLibraryManager()
             ?? throw new InvalidOperationException("Libraries not configured yet. Call ConfigureAsync() first.");
         return mgr.ResetConfigAsync(libraryId, sectionName, changedBy, ct);
+    }
+
+    /// <summary>
+    /// Re-read a library's config from disk (one section, or all when <paramref name="sectionName"/>
+    /// is null) and apply it. Invalid files keep the current values.
+    /// </summary>
+    public static Task<ConfigApplyResult> ReloadConfigAsync(
+        string libraryId,
+        string? sectionName = null,
+        string? changedBy = null,
+        CancellationToken ct = default)
+    {
+        var mgr = CodeLogic.GetLibraryManager()
+            ?? throw new InvalidOperationException("Libraries not configured yet. Call ConfigureAsync() first.");
+        return mgr.ReloadConfigAsync(libraryId, sectionName, changedBy, ct);
     }
 }

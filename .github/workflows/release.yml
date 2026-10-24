@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - release
+      - prerelease
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: codelogic-release
+  group: codelogic-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -28,87 +29,35 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: release
+          ref: ${{ github.ref_name }}
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
-      - name: Bump version from commit message
+      - name: Compose version
         id: version
         shell: pwsh
         run: |
-          $csproj = 'src/CodeLogic.csproj'
-          [xml]$proj = Get-Content $csproj
-          $versionNode = $proj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1
-          $currentVersion = $versionNode.Version
-          if ([string]::IsNullOrWhiteSpace($currentVersion)) {
-            throw "Could not read <Version> from $csproj"
-          }
-
-          # Read the merge commit message for bump hints.
-          # When merging main → release, the merge commit or the last
-          # real commit determines the bump level.
-          # Conventional-commit prefixes match with optional (scope):
-          #   feat: …          → minor
-          #   feat(scope): …   → minor
-          #   feat!: …         → major (breaking-bang)
-          #   feat(scope)!: …  → major
-          #   BREAKING CHANGE in any commit body → major
-          $msg = git log -1 --format=%B
-          if ($msg -match '(?im)^(breaking[:\s]|feat[!]|[a-z]+(\([^)]*\))?!:|BREAKING CHANGE)') {
-            $bump = 'major'
-          } elseif ($msg -match '(?im)^feat(\([^)]*\))?[:\s]') {
-            $bump = 'minor'
+          # ── Composed version: {major.minor from version.txt}.{run_number}[+sha] ──
+          # Major.Minor is hand-controlled in version.txt. The GitHub run number is
+          # the monotonic patch component. The git sha is SemVer build-metadata:
+          # nuget.org strips it from the package version, so it is provenance only —
+          # it survives in the assembly InformationalVersion. Nothing is written back
+          # to the repo; the version is composed at pack time via -p:Version.
+          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
+          $sha = '${{ github.sha }}'.Substring(0,7)
+          if ('${{ github.ref_name }}' -eq 'prerelease') {
+            $version = "$rootVer.${{ github.run_number }}-preview+$sha"
           } else {
-            # Look at all commits since the last tag for any feat/breaking
-            $lastTag = git describe --tags --abbrev=0 2>$null
-            if ($lastTag) {
-              $log = git log "$lastTag..HEAD" --format=%s
-              if ($log -match '(?im)^(breaking[:\s]|feat[!]|[a-z]+(\([^)]*\))?!:|BREAKING CHANGE)') {
-                $bump = 'major'
-              } elseif ($log -match '(?im)^feat(\([^)]*\))?[:\s]') {
-                $bump = 'minor'
-              } else {
-                $bump = 'patch'
-              }
-            } else {
-              $bump = 'patch'
-            }
+            $version = "$rootVer.${{ github.run_number }}+$sha"
           }
-
-          $parts = $currentVersion.Split('.')
-          $major = [int]$parts[0]; $minor = [int]$parts[1]; $patch = [int]$parts[2]
-
-          switch ($bump) {
-            'major' { $major++; $minor = 0; $patch = 0 }
-            'minor' { $minor++; $patch = 0 }
-            'patch' { $patch++ }
-          }
-
-          $newVersion = "$major.$minor.$patch"
-          $versionNode.Version = $newVersion
-          $proj.Save((Resolve-Path $csproj).Path)
-
-          Write-Host "CodeLogic: $currentVersion -> $newVersion ($bump)"
-
-          "current_version=$currentVersion" >> $env:GITHUB_OUTPUT
-          "new_version=$newVersion" >> $env:GITHUB_OUTPUT
-          "bump=$bump" >> $env:GITHUB_OUTPUT
-
-      - name: Commit version bump
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/CodeLogic.csproj
-          if git diff --cached --quiet; then
-            echo "No version changes to commit"
-          else
-            git commit -m "chore: release CodeLogic ${{ steps.version.outputs.new_version }} [skip ci]"
-            git push origin release
-          fi
+          # Tag/asset-safe form: no +metadata (illegal-ish in filenames, noisy in tags).
+          $tagVersion = $version.Split('+')[0]
+          Write-Host "Composed version for this run: $version (tag: v$tagVersion)"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
 
       - name: Restore
         run: dotnet restore src/CodeLogic.csproj
@@ -116,15 +65,15 @@ jobs:
       - name: Build
         run: |
           dotnet build src/CodeLogic.csproj --configuration Release --no-restore \
-            /p:Version=${{ steps.version.outputs.new_version }} \
-            /p:InformationalVersion=${{ steps.version.outputs.new_version }}
+            /p:Version=${{ steps.version.outputs.version }} \
+            /p:InformationalVersion=${{ steps.version.outputs.version }}
 
       - name: Pack
         run: |
           dotnet pack src/CodeLogic.csproj --configuration Release --no-build --output artifacts \
-            /p:PackageVersion=${{ steps.version.outputs.new_version }} \
-            /p:Version=${{ steps.version.outputs.new_version }} \
-            /p:InformationalVersion=${{ steps.version.outputs.new_version }}
+            /p:PackageVersion=${{ steps.version.outputs.version }} \
+            /p:Version=${{ steps.version.outputs.version }} \
+            /p:InformationalVersion=${{ steps.version.outputs.version }}
 
       # A partial push cannot be undone: dotnet nuget push walks artifacts one at a
       # time and aborts on the first rejection, leaving earlier packages published.
@@ -159,28 +108,28 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
-          $runtimeZip = "artifacts/CodeLogic-${{ steps.version.outputs.new_version }}.zip"
+          $runtimeZip = "artifacts/CodeLogic-${{ steps.version.outputs.tag_version }}.zip"
           Compress-Archive -Path 'src/bin/Release/net10.0/*' -DestinationPath $runtimeZip -Force
 
           @"
-          ## CodeLogic ${{ steps.version.outputs.new_version }}
+          ## CodeLogic ${{ steps.version.outputs.version }}
 
-          **Bump**: ${{ steps.version.outputs.bump }} (${{ steps.version.outputs.current_version }} → ${{ steps.version.outputs.new_version }})
           **Commit**: ${{ github.sha }}
           "@ | Set-Content 'artifacts/release-notes.md'
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ steps.version.outputs.new_version }}
-          name: CodeLogic ${{ steps.version.outputs.new_version }}
+          tag_name: v${{ steps.version.outputs.tag_version }}
+          name: CodeLogic ${{ steps.version.outputs.tag_version }}
           body_path: artifacts/release-notes.md
-          prerelease: false
+          prerelease: ${{ github.ref_name == 'prerelease' }}
           generate_release_notes: true
           files: |
             artifacts/*.nupkg
             artifacts/*.zip
 
-      # NOTE: version bumps are intentionally NOT synced back to main.
-      # main is the working branch (no auto-bump noise); release owns the
-      # version line. Push main → release to publish.
+      # NOTE: this workflow no longer writes versions back to the repo.
+      # The major.minor line lives in version.txt (hand-controlled); the patch
+      # is the CI run number, composed at pack time. Push main → prerelease for
+      # a preview package, main → release to publish.

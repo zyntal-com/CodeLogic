@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Events;
@@ -20,6 +21,9 @@ public sealed class LibraryManager : IDisposable
     private readonly object _configOverrideLock = new();
     private readonly List<ConfigOverrideRegistration> _configOverrides = [];
     private bool _configurationStarted;
+    private FileSystemWatcher? _configWatcher;
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _configReloadDebounce =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Logging options applied to library loggers.</summary>
     public LoggingOptions LoggingOptions { get; set; } = new();
@@ -33,6 +37,10 @@ public sealed class LibraryManager : IDisposable
     public bool EnableDependencyResolution { get; set; } = true;
     /// <summary>Glob pattern used to discover library directories.</summary>
     public string LibraryDiscoveryPattern { get; set; } = "CL.*";
+    /// <summary>When true, <see cref="StartConfigWatcher"/> watches library config files and reloads edited sections.</summary>
+    public bool EnableConfigHotReload { get; set; }
+    /// <summary>Quiet period after the last file event before a watched config file is reloaded.</summary>
+    public TimeSpan ConfigHotReloadDebounce { get; set; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Initializes a new library manager with the specified event bus.</summary>
     public LibraryManager(IEventBus eventBus)
@@ -236,6 +244,9 @@ public sealed class LibraryManager : IDisposable
                         if (forceGenerateConfigs && shouldApplyConfigGeneration)
                             await ctx.Configuration.GenerateAllDefaultsAsync(force: true);
 
+                        var owner = loaded;
+                        configuration.ChangedAsync = (change, ct) => OnLibraryConfigChangedAsync(owner, change, ct);
+
                         await configuration.LoadAllWithRuntimeOverridesAsync(
                             allowMissingConfigs,
                             (type, section, config) => ApplyConfigOverrides(
@@ -390,7 +401,10 @@ public sealed class LibraryManager : IDisposable
         {
             try
             {
-                results[loaded.Manifest.Id] = await loaded.Instance.HealthCheckAsync();
+                var status = await loaded.Instance.HealthCheckAsync();
+                if (loaded.ConfigApplyError is { } applyError && status.IsHealthy)
+                    status = HealthStatus.Degraded($"Config change not applied: {applyError.Message}");
+                results[loaded.Manifest.Id] = status;
             }
             catch (Exception ex)
             {
@@ -494,41 +508,226 @@ public sealed class LibraryManager : IDisposable
 
     /// <summary>
     /// Update a library's config section from a raw JSON payload.
-    /// Returns the validation result. File is untouched when validation fails.
+    /// File is untouched when validation fails. When the values are valid they are persisted and,
+    /// if the library implements <see cref="IConfigReloadable"/>, applied live —
+    /// <see cref="ConfigApplyResult.ApplyError"/> reports a failed apply (the file is kept).
     /// </summary>
-    public async Task<ConfigValidationResult> UpdateConfigAsync(
+    public async Task<ConfigApplyResult> UpdateConfigAsync(
         string libraryId,
         string sectionName,
         string json,
         string? changedBy = null,
         CancellationToken ct = default)
     {
-        var lib = _libraries.FirstOrDefault(l =>
-            string.Equals(l.Manifest.Id, libraryId, StringComparison.OrdinalIgnoreCase));
+        var lib = FindLoadedLibrary(libraryId);
         if (lib?.Context is null)
-            return ConfigValidationResult.Invalid($"Library '{libraryId}' is not loaded.");
+            return ConfigApplyResult.Invalid(ConfigValidationResult.Invalid($"Library '{libraryId}' is not loaded."));
 
-        return await lib.Context.Configuration
-            .UpdateSectionAsync(sectionName, json, changedBy, ct)
-            .ConfigureAwait(false);
+        try
+        {
+            var validation = await lib.Context.Configuration
+                .UpdateSectionAsync(sectionName, json, changedBy, ct)
+                .ConfigureAwait(false);
+            return validation.IsValid ? ConfigApplyResult.Success() : ConfigApplyResult.Invalid(validation);
+        }
+        catch (ConfigApplyException ex)
+        {
+            return ConfigApplyResult.Failed(ex.InnerException ?? ex);
+        }
     }
 
-    /// <summary>Reset a library's config section to defaults.</summary>
-    public async Task ResetConfigAsync(
+    /// <summary>Reset a library's config section to defaults and apply it like <see cref="UpdateConfigAsync"/>.</summary>
+    public async Task<ConfigApplyResult> ResetConfigAsync(
         string libraryId,
         string sectionName,
         string? changedBy = null,
         CancellationToken ct = default)
     {
-        var lib = _libraries.FirstOrDefault(l =>
-            string.Equals(l.Manifest.Id, libraryId, StringComparison.OrdinalIgnoreCase));
+        var lib = FindLoadedLibrary(libraryId);
         if (lib?.Context is null)
             throw new InvalidOperationException($"Library '{libraryId}' is not loaded.");
 
-        await lib.Context.Configuration
-            .ResetSectionAsync(sectionName, changedBy, ct)
-            .ConfigureAwait(false);
+        try
+        {
+            await lib.Context.Configuration
+                .ResetSectionAsync(sectionName, changedBy, ct)
+                .ConfigureAwait(false);
+            return ConfigApplyResult.Success();
+        }
+        catch (ConfigApplyException ex)
+        {
+            return ConfigApplyResult.Failed(ex.InnerException ?? ex);
+        }
     }
+
+    /// <summary>
+    /// Re-read a library's config from disk (one section, or all when <paramref name="sectionName"/>
+    /// is null), re-apply runtime overrides, and apply it like <see cref="UpdateConfigAsync"/>.
+    /// An invalid or missing file keeps the current values and is reported as invalid.
+    /// </summary>
+    public async Task<ConfigApplyResult> ReloadConfigAsync(
+        string libraryId,
+        string? sectionName = null,
+        string? changedBy = null,
+        CancellationToken ct = default)
+    {
+        var lib = FindLoadedLibrary(libraryId);
+        if (lib?.Context is null)
+            return ConfigApplyResult.Invalid(ConfigValidationResult.Invalid($"Library '{libraryId}' is not loaded."));
+
+        var configuration = GetConfigurationManager(lib.Context);
+        try
+        {
+            var validation = sectionName is null
+                ? await configuration.ReloadAllSectionsAsync(changedBy, ct).ConfigureAwait(false)
+                : await configuration.ReloadSectionAsync(
+                    configuration.ResolveTypeForSection(sectionName), changedBy, ct).ConfigureAwait(false);
+            return validation.IsValid ? ConfigApplyResult.Success() : ConfigApplyResult.Invalid(validation);
+        }
+        catch (ConfigApplyException ex)
+        {
+            return ConfigApplyResult.Failed(ex.InnerException ?? ex);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FileNotFoundException)
+        {
+            return ConfigApplyResult.Invalid(ConfigValidationResult.Invalid(ex.Message));
+        }
+    }
+
+    // ── Config hot reload (4.9.0+) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Starts watching <c>Libraries/*/config*.json</c> when <see cref="EnableConfigHotReload"/> is true.
+    /// Edited sections are reloaded via <see cref="ReloadConfigAsync"/> after <see cref="ConfigHotReloadDebounce"/>.
+    /// Invalid edits are logged and the current values kept. Safe to call more than once.
+    /// </summary>
+    public void StartConfigWatcher()
+    {
+        if (!EnableConfigHotReload || _configWatcher is not null) return;
+
+        var root = Path.Combine(FrameworkRootPath, "Libraries");
+        Directory.CreateDirectory(root);
+        _configWatcher = new FileSystemWatcher(root, "config*.json")
+        {
+            NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            IncludeSubdirectories = true
+        };
+        _configWatcher.Changed += (_, e) => ScheduleConfigReload(e.FullPath);
+        _configWatcher.Created += (_, e) => ScheduleConfigReload(e.FullPath);
+        _configWatcher.Renamed += (_, e) => ScheduleConfigReload(e.FullPath);
+        _configWatcher.EnableRaisingEvents = true;
+    }
+
+    private void ScheduleConfigReload(string path)
+    {
+        if (!path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return;
+
+        // Trailing debounce: every event restarts the quiet period for that file.
+        var cts = new CancellationTokenSource();
+        _configReloadDebounce.AddOrUpdate(path, cts, (_, previous) => { previous.Cancel(); return cts; });
+
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(ConfigHotReloadDebounce, cts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+
+            _configReloadDebounce.TryRemove(new KeyValuePair<string, CancellationTokenSource>(path, cts));
+            try { await ReloadChangedConfigFileAsync(path).ConfigureAwait(false); }
+            catch (Exception ex) { Console.Error.WriteLine($"[LibraryManager] Config watcher error: {ex.Message}"); }
+        });
+    }
+
+    private async Task ReloadChangedConfigFileAsync(string path)
+    {
+        foreach (var lib in _libraries.ToList())
+        {
+            if (lib.Context?.Configuration is not ConfigurationManager configuration) continue;
+            var type = configuration.FindTypeForFile(path);
+            if (type is null) continue;
+
+            var content = await ReadFileWithRetryAsync(path).ConfigureAwait(false);
+            if (content is null || configuration.IsKnownContent(path, content))
+                return; // deleted, or our own write / an unchanged file
+
+            var section = configuration.GetSectionName(type);
+            var result = await ReloadConfigAsync(lib.Manifest.Id, section, changedBy: "file-watcher").ConfigureAwait(false);
+            if (!result.IsValid)
+                lib.Context.Logger.Warning(
+                    $"Config file '{Path.GetFileName(path)}' changed but was not reloaded (current values kept): {result}");
+            else if (result.Applied)
+                lib.Context.Logger.Info($"Config file '{Path.GetFileName(path)}' reloaded");
+            return;
+        }
+    }
+
+    private static async Task<string?> ReadFileWithRetryAsync(string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await File.ReadAllTextAsync(path).ConfigureAwait(false);
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (IOException) when (attempt < 5)
+            {
+                await Task.Delay(100).ConfigureAwait(false); // editor still holds the file
+            }
+        }
+    }
+
+    private async Task OnLibraryConfigChangedAsync(LoadedLibrary loaded, ConfigChangedEventArgs change, CancellationToken ct)
+    {
+        var ctx = loaded.Context;
+        if (ctx is null || change.ConfigType is null) return;
+
+        try
+        {
+            // Before Initialize the library reads config itself; nothing to apply yet.
+            if (loaded.State is not (LibraryState.Initialized or LibraryState.Started)) return;
+
+            if (loaded.Instance is not IConfigReloadable reloadable)
+            {
+                var changed = ConfigDiff.ChangedProperties(change.OldValue, change.NewValue);
+                if (ConfigDiff.RequiresRestart(change.ConfigType, changed))
+                    ctx.Logger.Warning(
+                        $"Config section '{DisplaySection(change.SectionName)}' changed settings that require a restart: " +
+                        string.Join(", ", changed));
+                return;
+            }
+
+            try
+            {
+                await reloadable.OnConfigChangedAsync(ctx, change, ct).ConfigureAwait(false);
+                if (loaded.ConfigApplyError is not null)
+                {
+                    loaded.ConfigApplyError = null;
+                    ctx.Logger.Info($"Config section '{DisplaySection(change.SectionName)}' applied; previous apply error cleared");
+                }
+            }
+            catch (Exception ex)
+            {
+                loaded.ConfigApplyError = ex;
+                ctx.Logger.Error($"Config section '{DisplaySection(change.SectionName)}' was saved but could not be applied", ex);
+                _eventBus.Publish(new ConfigApplyFailedEvent(loaded.Manifest.Id, change.SectionName, ex));
+                throw;
+            }
+        }
+        finally
+        {
+            _eventBus.Publish(new ConfigChangedEvent(
+                loaded.Manifest.Id, change.SectionName, change.ConfigType, change.Kind, change.ChangedBy));
+            if (change.Kind == ConfigChangeKind.Reloaded)
+                _eventBus.Publish(new ConfigReloadedEvent(loaded.Manifest.Id, change.ConfigType));
+        }
+    }
+
+    private static string DisplaySection(string sectionName) =>
+        string.IsNullOrEmpty(sectionName) ? "(main)" : sectionName;
+
+    private LoadedLibrary? FindLoadedLibrary(string libraryId) =>
+        _libraries.FirstOrDefault(l =>
+            string.Equals(l.Manifest.Id, libraryId, StringComparison.OrdinalIgnoreCase));
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
@@ -788,5 +987,10 @@ public sealed class LibraryManager : IDisposable
     public void Dispose()
     {
         AppDomain.CurrentDomain.AssemblyResolve -= OnAssemblyResolve;
+        _configWatcher?.Dispose();
+        _configWatcher = null;
+        foreach (var cts in _configReloadDebounce.Values)
+            cts.Cancel();
+        _configReloadDebounce.Clear();
     }
 }

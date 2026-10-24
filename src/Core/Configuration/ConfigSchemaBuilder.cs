@@ -49,7 +49,7 @@ internal static class ConfigSchemaBuilder
         List<ConfigField> accumulator)
     {
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.CanWrite)
+            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0)
             .ToArray();
 
         foreach (var prop in props)
@@ -85,6 +85,20 @@ internal static class ConfigSchemaBuilder
                         var keyStr = key.ToString() ?? "";
                         var entryPath = $"{fieldPath}.{keyStr}";
                         AppendFields(valueType, dict[key], Activator.CreateInstance(valueType), entryPath, fieldGroup, fieldCollapsed, includeSecrets, accumulator);
+                    }
+                }
+                continue;
+            }
+
+            if (IsListOfObjects(propType, out var elementType) && elementType is not null)
+            {
+                // List<X> of objects — recurse each entry with path "{fieldPath}.{index}".
+                if (currentValue is IList list)
+                {
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        if (list[i] is null) continue;
+                        AppendFields(elementType, list[i], Activator.CreateInstance(elementType), $"{fieldPath}.{i}", fieldGroup, fieldCollapsed, includeSecrets, accumulator);
                     }
                 }
                 continue;
@@ -241,6 +255,29 @@ internal static class ConfigSchemaBuilder
         var def = t.GetGenericTypeDefinition();
         if (def != typeof(List<>) && def != typeof(IList<>) && def != typeof(IReadOnlyList<>)) return false;
         return IsPrimitiveLike(t.GetGenericArguments()[0]);
+    }
+
+    /// <summary>True for <c>List&lt;X&gt;</c> / <c>IList&lt;X&gt;</c> / <c>IReadOnlyList&lt;X&gt;</c> of config objects.</summary>
+    internal static bool IsListOfObjects(Type t, out Type? elementType)
+    {
+        elementType = null;
+        if (!t.IsGenericType) return false;
+        var def = t.GetGenericTypeDefinition();
+        if (def != typeof(List<>) && def != typeof(IList<>) && def != typeof(IReadOnlyList<>)) return false;
+        var arg = t.GetGenericArguments()[0];
+        if (IsPrimitiveLike(arg) || arg.IsEnum || !arg.IsClass) return false;
+        elementType = arg;
+        return true;
+    }
+
+    /// <summary>The string property that identifies a list entry: <c>Id</c>, <c>Name</c>, <c>Key</c>, else the first <c>…Id</c>.</summary>
+    internal static PropertyInfo? FindKeyProperty(Type elementType)
+    {
+        var strings = elementType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.PropertyType == typeof(string) && p.CanRead && p.GetIndexParameters().Length == 0)
+            .ToList();
+        return strings.FirstOrDefault(p => p.Name is "Id" or "Name" or "Key")
+            ?? strings.FirstOrDefault(p => p.Name.EndsWith("Id", StringComparison.Ordinal));
     }
 
     private static string TypeHintFor(Type t)

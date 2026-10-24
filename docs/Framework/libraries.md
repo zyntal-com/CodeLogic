@@ -31,6 +31,21 @@ public interface ILibrary : IDisposable
 
 **Key rule:** Do not read config in `OnConfigureAsync`. Config is loaded *after* this method returns. Read it in `OnInitializeAsync`.
 
+### Live config changes (optional, 4.9.0+)
+
+Implement `IConfigReloadable` to apply config changes while running, instead of on the next restart:
+
+```csharp
+public interface IConfigReloadable
+{
+    Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken ct);
+}
+```
+
+It is called after a section changes (admin UI update, reload from disk, reset, file watcher, or the library's own `SaveAsync`), once the library is initialized. `change.GetOld<T>()` / `change.GetNew<T>()` give before/after snapshots; `ConfigDiff.Keyed(...)` tells you which named instances were added, removed, changed, or untouched, so you rebuild only those. Throwing reports the change as *saved but not applied* and the library is reported Degraded until a later change applies (`LoadedLibrary.ConfigApplyError`).
+
+Libraries that don't implement it still get changes persisted; they take effect on restart (a warning is logged when fields marked `RequiresRestart` changed). Full pattern: [Configuration › Live reload for libraries](../Core/configuration.md#live-reload-for-libraries-490).
+
 ---
 
 ## LibraryContext

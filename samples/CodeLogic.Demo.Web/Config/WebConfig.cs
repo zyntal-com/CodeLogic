@@ -7,7 +7,8 @@ namespace CodeLogic.Demo.Web.Config;
 // Application configuration model for the web demo.
 //
 // Generated to: data/app/config.json
-// Edit that file to change values at runtime (ReloadAsync for safe values).
+// Edit that file, then call Configuration.ReloadAsync<WebConfig>() to pick it up.
+// Reload replaces the instance — call Get<WebConfig>() again rather than caching it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class WebConfig : ConfigModelBase

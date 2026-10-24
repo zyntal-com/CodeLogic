@@ -118,7 +118,7 @@ Example development file:
 {
   "framework": {
     "name": "CodeLogic",
-    "version": "4.0.0"
+    "version": "4.8.142"
   },
   "logging": {
     "mode": "singleFile",

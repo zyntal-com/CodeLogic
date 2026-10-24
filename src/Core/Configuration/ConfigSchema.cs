@@ -91,6 +91,12 @@ public sealed class ConfigField
     /// </summary>
     public object? CurrentValue { get; init; }
 
+    /// <summary>
+    /// True when <see cref="CurrentValue"/> comes from a runtime-only override rather than the
+    /// config file. Saving leaves the file value untouched unless the field is explicitly changed.
+    /// </summary>
+    public bool IsOverridden { get; internal set; }
+
     /// <summary>The placeholder string used when masking secret values on read.</summary>
     public const string SecretMask = "••••••••";
 }

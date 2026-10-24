@@ -19,7 +19,7 @@ The building blocks available to all components.
 | Document | Description |
 |----------|-------------|
 | [Logging](Core/logging.md) | `ILogger`, `LogLevel`, `LoggingMode`, `LoggingOptions`, `NullLogger`, development vs production behavior, log file locations, and console output. |
-| [Configuration](Core/configuration.md) | `ConfigModelBase`, `ConfigSectionAttribute`, `IConfigurationManager`, file naming, the Register → Generate → Load → Save → Reload lifecycle, and DataAnnotations validation. |
+| [Configuration](Core/configuration.md) | `ConfigModelBase`, `ConfigSectionAttribute`, `IConfigurationManager`, file naming, the Register → Generate → Load → Save → Reload lifecycle, live per-instance reload for libraries (`IConfigReloadable`, `ConfigDiff`), config file watching, and DataAnnotations validation. |
 | [Localization](Core/localization.md) | `LocalizationModelBase`, `LocalizationSectionAttribute`, `LocalizedStringAttribute`, `ILocalizationManager`, culture fallback, file naming, reload support, and format strings. |
 | [Events](Core/events.md) | `IEventBus`, `IEvent`, `IEventSubscription`, framework events reference, the `ComponentAlertEvent` bridge pattern, thread safety, and code examples. |
 | [Results](Core/results.md) | `Result<T>`, `Result`, `Error`, `ErrorCode` — the framework's error handling pattern with factory methods, implicit conversions, and chaining. |
@@ -57,3 +57,4 @@ Configuration files, CLI arguments, and runtime environment.
 | [CodeLogic.json Reference](Reference/codelogic-json.md) | Complete reference for `CodeLogic.json` and `CodeLogic.Development.json` — every section and property with defaults and examples. |
 | [Environment](Reference/environment.md) | `CodeLogicEnvironment` properties, `IsDevelopment` detection logic, `IsDebugging`, and `AppVersion` lifecycle. |
 | [Health Checks](Reference/health-checks.md) | `HealthStatus`, `HealthReport`, `ToJson()`, `ToConsoleString()`, scheduled checks, the `--health` CLI flag, and implementing `HealthCheckAsync`. |
+| [Versioning](Reference/versioning.md) | The shared `4.8.<patch>` version line, `version.txt`, CI-composed patch numbers, assembly binding identity, and the prerelease/release branch flow. |

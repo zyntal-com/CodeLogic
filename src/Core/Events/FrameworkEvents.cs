@@ -1,3 +1,5 @@
+using CodeLogic.Core.Configuration;
+
 namespace CodeLogic.Core.Events;
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -24,6 +26,20 @@ public record PluginFailedEvent(string PluginId, string PluginName, Exception Er
 
 /// <summary>Published after a specific config type is reloaded from disk.</summary>
 public record ConfigReloadedEvent(string ComponentId, Type ConfigType) : IEvent;
+
+/// <summary>Published after any committed config change (update, reload, reset) of a library section.</summary>
+public record ConfigChangedEvent(
+    string ComponentId,
+    string SectionName,
+    Type ConfigType,
+    ConfigChangeKind Kind,
+    string? ChangedBy) : IEvent;
+
+/// <summary>
+/// Published when a config change was valid and persisted but the library failed to apply it.
+/// The library reports Degraded health until a later change applies successfully.
+/// </summary>
+public record ConfigApplyFailedEvent(string ComponentId, string SectionName, Exception Error) : IEvent;
 
 /// <summary>Published after all localizations are reloaded from disk.</summary>
 public record LocalizationReloadedEvent(string ComponentId) : IEvent;

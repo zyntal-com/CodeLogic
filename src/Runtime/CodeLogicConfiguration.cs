@@ -199,6 +199,25 @@ public sealed class LibrariesConfig
     /// Default: true.
     /// </summary>
     public bool EnableDependencyResolution { get; set; } = true;
+
+    /// <summary>
+    /// Watches library config files (<c>Libraries/*/config*.json</c>) and reloads a section
+    /// when its file is edited on disk. Off by default.
+    /// </summary>
+    public ConfigHotReloadConfig ConfigHotReload { get; set; } = new();
+}
+
+/// <summary>
+/// Library config file watching within <see cref="LibrariesConfig"/>.
+/// Maps to <c>"libraries.configHotReload"</c> in CodeLogic.json.
+/// </summary>
+public sealed class ConfigHotReloadConfig
+{
+    /// <summary>When true, edits to library config files are reloaded automatically. Default: false.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Quiet period after the last file event before reloading. Default: 500 ms.</summary>
+    public int DebounceMs { get; set; } = 500;
 }
 
 /// <summary>
