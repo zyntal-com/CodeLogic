@@ -53,6 +53,47 @@ public sealed class ConfigReloadTests
         Assert.False(ConfigDiff.RequiresRestart(typeof(KeyedConfig), ["databases.B.poolSize"]));
     }
 
+    // ── List-of-object sections ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task List_sections_render_in_the_schema_with_masked_secrets()
+    {
+        using var dir = new TempDir();
+        var config = new ConfigurationManager(dir.Path);
+        config.Register<ListConfig>("list");
+        await config.LoadAllAsync();
+
+        var schema = config.GetSchema("list");
+
+        var secret = Assert.Single(schema.Fields, f => f.Path == "repositories.0.token");
+        Assert.Equal(ConfigField.SecretMask, secret.CurrentValue);
+        Assert.Contains(schema.Fields, f => f.Path == "repositories.1.id" && (string?)f.CurrentValue == "beta");
+    }
+
+    [Fact]
+    public async Task Masked_secrets_in_list_entries_are_kept_by_entry_key_even_when_reordered()
+    {
+        using var dir = new TempDir();
+        var config = new ConfigurationManager(dir.Path);
+        config.Register<ListConfig>("list");
+        await config.LoadAllAsync();
+
+        // An admin UI echoes the mask back, with the entries reordered and one added.
+        var json = $$"""
+        { "repositories": [
+            { "id": "beta",  "url": "b2", "token": "{{ConfigField.SecretMask}}" },
+            { "id": "alpha", "url": "a",  "token": "{{ConfigField.SecretMask}}" },
+            { "id": "gamma", "url": "g",  "token": "token-g" } ] }
+        """;
+        var result = await config.UpdateSectionAsync("list", json);
+
+        Assert.True(result.IsValid);
+        var saved = config.Get<ListConfig>().Repositories.ToDictionary(r => r.Id, r => r.Token);
+        Assert.Equal("token-a", saved["alpha"]);
+        Assert.Equal("token-b", saved["beta"]);
+        Assert.Equal("token-g", saved["gamma"]);
+    }
+
     // ── Per-instance changes ─────────────────────────────────────────────────
 
     [Fact]
@@ -383,6 +424,37 @@ public sealed class ConfigReloadTests
             var empty = Databases.Where(d => string.IsNullOrEmpty(d.Value.Host)).Select(d => $"Database '{d.Key}': host is required");
             var errors = empty.ToList();
             return errors.Count > 0 ? ConfigValidationResult.Invalid(errors) : ConfigValidationResult.Valid();
+        }
+    }
+
+    private sealed class ListConfig : ConfigModelBase
+    {
+        public List<RepoConfig> Repositories { get; set; } =
+        [
+            new() { Id = "alpha", Url = "a", Token = "token-a" },
+            new() { Id = "beta", Url = "b", Token = "token-b" }
+        ];
+    }
+
+    private sealed class RepoConfig
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string Url { get; set; } = string.Empty;
+
+        [ConfigField(Secret = true)]
+        public string Token { get; set; } = string.Empty;
+    }
+
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "cl_cfg_" + Guid.NewGuid().ToString("N"));
+
+        public TempDir() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); } catch { /* best effort */ }
         }
     }
 

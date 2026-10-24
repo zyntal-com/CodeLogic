@@ -667,13 +667,14 @@ public sealed class ConfigurationManager : IConfigurationManager
     /// <summary>
     /// Walk <paramref name="incoming"/> and replace any string property that
     /// equals <see cref="ConfigField.SecretMask"/> with the corresponding value
-    /// from <paramref name="previous"/>. Recurses into nested objects and
-    /// <c>Dictionary&lt;string,X&gt;</c> entries.
+    /// from <paramref name="previous"/>. Recurses into nested objects,
+    /// <c>Dictionary&lt;string,X&gt;</c> entries and <c>List&lt;X&gt;</c> entries
+    /// (see <see cref="PairListEntries"/>).
     /// </summary>
     private static void PreserveMaskedSecrets(Type type, object previous, object incoming)
     {
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.CanWrite);
+            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0);
 
         foreach (var prop in props)
         {
@@ -716,9 +717,47 @@ public sealed class ConfigurationManager : IConfigurationManager
                     continue;
                 }
 
+                // List<X> of objects
+                if (ConfigSchemaBuilder.IsListOfObjects(pt, out var elementType) && elementType is not null)
+                {
+                    foreach (var (previousEntry, incomingEntry) in PairListEntries(
+                                 elementType, (System.Collections.IList)prevNested, (System.Collections.IList)incomingNested))
+                        PreserveMaskedSecrets(elementType, previousEntry, incomingEntry);
+                    continue;
+                }
+
                 PreserveMaskedSecrets(pt, prevNested, incomingNested);
             }
         }
+    }
+
+    /// <summary>
+    /// Pairs incoming list entries with the previous entries they replace: by the element's key
+    /// property (<c>Id</c>, <c>Name</c>, <c>Key</c> or <c>…Id</c>) when it has one, otherwise by
+    /// position, and only when the list length is unchanged — a masked secret must never be
+    /// filled in from a different entry.
+    /// </summary>
+    private static IEnumerable<(object Previous, object Incoming)> PairListEntries(
+        Type elementType, System.Collections.IList previous, System.Collections.IList incoming)
+    {
+        var keyProp = ConfigSchemaBuilder.FindKeyProperty(elementType);
+        if (keyProp is not null)
+        {
+            var byKey = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var entry in previous)
+                if (entry is not null && keyProp.GetValue(entry) is string key)
+                    byKey.TryAdd(key, entry);
+
+            foreach (var entry in incoming)
+                if (entry is not null && keyProp.GetValue(entry) is string key && byKey.TryGetValue(key, out var match))
+                    yield return (match, entry);
+            yield break;
+        }
+
+        if (previous.Count != incoming.Count) yield break;
+        for (var i = 0; i < incoming.Count; i++)
+            if (previous[i] is { } p && incoming[i] is { } n)
+                yield return (p, n);
     }
 
     private string GetFilePath(Type type)

@@ -35,6 +35,11 @@
 - Runtime config overrides (`OverrideConfig`) were lost on reload/update and were written to
   the config file when the section was saved. They are now re-applied after every change and
   never persisted.
+- `UpdateSectionAsync` / `UpdateConfigAsync` and `GetSchema` threw `TargetParameterCountException`
+  for any section with a `List<T>` of objects (they reflected over the list's indexer). List
+  entries now appear in the schema as `{list}.{index}.{field}` with secrets masked, and masked
+  secrets sent back are restored from the matching previous entry (matched by its `Id` / `Name` /
+  `Key` / `…Id` property, else by position when the length is unchanged).
 
 ## 4.8.x
 
