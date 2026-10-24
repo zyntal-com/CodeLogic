@@ -18,7 +18,7 @@ Most .NET apps start with `Program.cs` and grow organically — services get reg
 CodeLogic gives you a **structured lifecycle** out of the box:
 
 - **Libraries** (reusable integrations) and **Applications** (your business logic) follow the same 4-phase lifecycle: Configure → Initialize → Start → Stop. Dependencies are always resolved in the right order.
-- **Configuration** and **Localization** are built in — not bolted on. Each library and application gets its own config file, auto-generated on first run with defaults and validation.
+- **Configuration** and **Localization** are built in — not bolted on. Each library and application gets its own config file, auto-generated on first run with defaults and validation. Config can be changed and reloaded while running — libraries can apply a change to just the instance that changed (e.g. one database out of three) without a restart.
 - **Plugins** are first-class citizens with hot-reload, isolated assembly contexts, and the same lifecycle as libraries.
 - **Zero external dependencies.** CodeLogic itself has no NuGet dependencies — it's pure .NET 10. External integrations (MySQL, S3, SMTP, etc.) are optional library packages in the [CodeLogic.* family](https://github.com/zyntal-com/CodeLogic.Libs).
 

@@ -114,6 +114,12 @@ public async Task OnStopAsync()
 
 ---
 
+## Live config changes
+
+Optional: a library that also implements `IConfigReloadable` gets `OnConfigChangedAsync` after its config changes at runtime (admin UI, reload, file watcher), and can apply it without a restart — for example reconnecting only the one database whose settings changed. See [Configuration › Hot Reload](configuration.md#hot-reload).
+
+---
+
 ## LibraryContext
 
 The same `LibraryContext` instance is passed to all four phases. Store it in a field if you need it during `OnStopAsync`:

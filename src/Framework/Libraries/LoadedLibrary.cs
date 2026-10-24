@@ -30,4 +30,11 @@ public sealed class LoadedLibrary
     /// it. Set by <see cref="LibraryLoadOptions.OptionalAtBoot"/>.
     /// </summary>
     public bool IsOptional { get; init; }
+
+    /// <summary>
+    /// Set when the last config change was persisted but the library failed to apply it
+    /// (see <see cref="IConfigReloadable"/>). Cleared by the next successful apply.
+    /// While set, the library's health is reported as at most Degraded.
+    /// </summary>
+    public Exception? ConfigApplyError { get; internal set; }
 }

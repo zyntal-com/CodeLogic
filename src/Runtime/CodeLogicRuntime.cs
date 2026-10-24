@@ -110,7 +110,9 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 DefaultCulture = cfg.Localization.DefaultCulture,
                 SupportedCultures = cfg.Localization.SupportedCultures,
                 EnableDependencyResolution = cfg.Libraries.EnableDependencyResolution,
-                LibraryDiscoveryPattern = cfg.Libraries.DiscoveryPattern
+                LibraryDiscoveryPattern = cfg.Libraries.DiscoveryPattern,
+                EnableConfigHotReload = cfg.Libraries.ConfigHotReload.Enabled,
+                ConfigHotReloadDebounce = TimeSpan.FromMilliseconds(Math.Max(0, cfg.Libraries.ConfigHotReload.DebounceMs))
             };
             _frameworkLogger.Info("Library manager created - ready for Libraries.LoadAsync<T>()");
 
@@ -251,6 +253,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             {
                 await _libraryManager.InitializeAllAsync();
                 await _libraryManager.StartAllAsync();
+                _libraryManager.StartConfigWatcher();
             }
 
             if (_application != null && _applicationContext != null)

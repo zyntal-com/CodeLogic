@@ -110,8 +110,10 @@ public interface IConfigurationManager
 {
     void Register<T>() where T : ConfigModelBase, new();
     T Get<T>() where T : ConfigModelBase;
-    Task ReloadAsync();
-    Task SaveAsync<T>(T model) where T : ConfigModelBase;
+    Task ReloadAsync<T>() where T : ConfigModelBase, new();
+    Task ReloadAllAsync();
+    Task SaveAsync<T>(T model) where T : ConfigModelBase, new();
+    event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
 }
 ```
 
@@ -152,7 +154,7 @@ public Task OnConfigureAsync(ApplicationContext context)
 }
 ```
 
-Set `MYSQL_HOST=db.internal` in the environment, or pass `--mysql-host db.internal` (or `--mysql-host=db.internal`). Command-line values win. The override is applied after the normal JSON is read but before final validation, is visible to the library during `OnInitializeAsync`, and is never written to the JSON file. Register it no later than application `OnConfigureAsync`; changing connection settings after a library starts still requires restart behavior.
+Set `MYSQL_HOST=db.internal` in the environment, or pass `--mysql-host db.internal` (or `--mysql-host=db.internal`). Command-line values win. The override is applied after the normal JSON is read but before final validation, is visible to the library during `OnInitializeAsync`, and is never written to the JSON file — not even when the section is later saved, updated through an admin UI, or reloaded (the override is re-applied each time). Register it no later than application `OnConfigureAsync`.
 
 ---
 
@@ -182,11 +184,11 @@ Use `--force` to regenerate even if files already exist:
 Config can be reloaded at runtime:
 
 ```csharp
-await context.Configuration.ReloadAsync();
-var updated = context.Configuration.Get<DatabaseConfig>();
+await context.Configuration.ReloadAsync<DatabaseConfig>();
+var updated = context.Configuration.Get<DatabaseConfig>(); // reload replaces the instance
 ```
 
-You can watch for external changes and trigger a reload via an event or a background timer.
+Libraries can apply changes live, per instance, by implementing `IConfigReloadable` and using `ConfigDiff.Keyed` on the old/new values — e.g. reconnect only the one database whose settings changed. File watching is opt-in via `libraries.configHotReload` in `CodeLogic.json`. See [Core › Configuration](../Core/configuration.md#live-reload-for-libraries-490) for the full pattern.
 
 ---
 

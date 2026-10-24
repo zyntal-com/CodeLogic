@@ -38,14 +38,17 @@ public interface IConfigurationManager
     Task ValidateAllAsync(bool allowMissingFiles = false);
 
     /// <summary>
-    /// Reloads a specific config from disk and updates the in-memory instance.
-    /// Fires <see cref="ConfigChanged"/> with <see cref="ConfigChangeKind.Reloaded"/> on success.
-    /// Safe for: log levels, intervals, pool sizes.
-    /// NOT safe for: connection strings, paths, core settings (requires restart).
+    /// Reloads a specific config from disk and replaces the in-memory instance
+    /// (runtime overrides are re-applied). Fires <see cref="ConfigChanged"/> with
+    /// <see cref="ConfigChangeKind.Reloaded"/> on success. Code that cached the old
+    /// instance keeps the old values — call <see cref="Get{T}"/> again or react to the event.
     /// </summary>
     Task ReloadAsync<T>() where T : ConfigModelBase, new();
 
-    /// <summary>Reloads all registered configs from disk.</summary>
+    /// <summary>
+    /// Reloads all registered configs from disk. Every file is validated first; if any is
+    /// invalid, nothing is changed and an <see cref="InvalidOperationException"/> is thrown.
+    /// </summary>
     Task ReloadAllAsync();
 
     /// <summary>Returns the on-disk paths for all registered config files.</summary>
@@ -90,7 +93,8 @@ public interface IConfigurationManager
     /// <summary>
     /// Fired after a successful save / reload / reset. Subscribers typically use
     /// this to refresh cached state derived from the section (connection pools,
-    /// thresholds, etc.). Fires on the calling thread; keep handlers fast.
+    /// thresholds, etc.). Events carry old/new snapshots and are delivered in commit
+    /// order on a thread-pool thread; the changing call waits for them. Keep handlers fast.
     /// </summary>
     event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
 }

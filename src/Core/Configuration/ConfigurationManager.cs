@@ -1,18 +1,32 @@
+using System.Collections.Concurrent;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace CodeLogic.Core.Configuration;
 
 /// <summary>
 /// File-based JSON configuration manager for a single component.
-/// Thread-safe for concurrent reads; writes use file system atomicity.
+/// Thread-safe: reads are lock-free, changes (save / reload / update / reset) are
+/// serialized, files are written atomically, and change notifications are delivered
+/// in the order the changes were committed.
 /// </summary>
 public sealed class ConfigurationManager : IConfigurationManager
 {
     private readonly string _baseDirectory;
-    private readonly Dictionary<Type, object> _loaded = new();
+    private readonly ConcurrentDictionary<Type, ConfigModelBase> _loaded = new();   // effective values
+    private readonly ConcurrentDictionary<Type, SectionState> _state = new();       // file vs effective snapshot
     private readonly Dictionary<Type, string> _registered = new(); // Type → subConfigName
+    private readonly ConcurrentDictionary<string, string> _knownContent = new(StringComparer.OrdinalIgnoreCase); // path → hash
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly object _notifyGate = new();
+    private Task _notifyTail = Task.CompletedTask;
+
+    // Set while change handlers run, so a handler that saves config again doesn't wait on itself.
+    private static readonly AsyncLocal<ConfigurationManager?> _notifying = new();
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -22,8 +36,22 @@ public sealed class ConfigurationManager : IConfigurationManager
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
+    internal static JsonSerializerOptions JsonOptions => _jsonOptions;
+
     /// <inheritdoc />
     public event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
+
+    /// <summary>
+    /// Runtime-only overrides applied on top of the file values every time a section is
+    /// loaded or changed. Set by the framework (library <c>OverrideConfig</c>); never persisted.
+    /// </summary>
+    internal Func<Type, string, ConfigModelBase, ConfigModelBase>? RuntimeOverrides { get; set; }
+
+    /// <summary>
+    /// Async change handler awaited after <see cref="ConfigChanged"/> for every committed change.
+    /// Exceptions surface to the caller as <see cref="ConfigApplyException"/>.
+    /// </summary>
+    internal Func<ConfigChangedEventArgs, CancellationToken, Task>? ChangedAsync { get; set; }
 
     /// <summary>Initializes the configuration manager with the specified base directory.</summary>
     public ConfigurationManager(string baseDirectory)
@@ -50,138 +78,70 @@ public sealed class ConfigurationManager : IConfigurationManager
     }
 
     /// <inheritdoc />
-    public async Task GenerateDefaultAsync<T>(bool force = false) where T : ConfigModelBase, new()
-    {
-        var path = GetFilePath<T>();
-        if (!force && File.Exists(path)) return;
-
-        var defaultConfig = new T();
-        await WriteToFileAsync(path, defaultConfig);
-    }
+    public Task GenerateDefaultAsync<T>(bool force = false) where T : ConfigModelBase, new() =>
+        GenerateDefaultAsync(typeof(T), force);
 
     /// <inheritdoc />
-    public async Task LoadAsync<T>(bool generateIfMissing = true) where T : ConfigModelBase, new()
-    {
-        var path = GetFilePath<T>();
-
-        if (!File.Exists(path))
-        {
-            if (!generateIfMissing)
-                throw new FileNotFoundException(
-                    $"Config file for '{typeof(T).Name}' not found at: {path}");
-
-            await GenerateDefaultAsync<T>();
-        }
-
-        await LoadExistingAsync<T>();
-    }
+    public Task LoadAsync<T>(bool generateIfMissing = true) where T : ConfigModelBase, new() =>
+        LoadAsync(typeof(T), generateIfMissing);
 
     /// <inheritdoc />
     public async Task SaveAsync<T>(T config) where T : ConfigModelBase, new()
     {
-        // Validate BEFORE writing — never persist invalid config
-        var validation = config.Validate();
-        if (!validation.IsValid)
-            throw new InvalidOperationException(
-                $"Cannot save invalid configuration '{typeof(T).Name}': {validation}");
+        ArgumentNullException.ThrowIfNull(config);
+        var type = typeof(T);
+        ConfigChangedEventArgs args;
+        Task notification;
 
-        var path = GetFilePath<T>();
-        await WriteToFileAsync(path, config);
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // Validate BEFORE writing — never persist invalid config
+            var prepared = Prepare(type, StripRuntimeOverrides(type, config));
+            if (!prepared.Validation.IsValid)
+                throw new InvalidOperationException(
+                    $"Cannot save invalid configuration '{type.Name}': {prepared.Validation}");
 
-        // Update in-memory cache
-        _loaded[typeof(T)] = config;
+            await WriteFileAsync(GetFilePath(type), prepared.State!.PersistedJson, CancellationToken.None).ConfigureAwait(false);
+            args = Commit(prepared, ConfigChangeKind.Updated, changedBy: null);
+            notification = EnqueueNotification(args, CancellationToken.None);
+        }
+        finally { _writeLock.Release(); }
 
-        FireChanged(typeof(T), ConfigChangeKind.Updated);
+        await AwaitNotificationAsync(notification, args).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task GenerateAllDefaultsAsync(bool force = false)
     {
         foreach (var type in _registered.Keys)
-        {
-            var method = typeof(ConfigurationManager)
-                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Single(m => m.Name == nameof(GenerateDefaultAsync) && m.IsGenericMethodDefinition)
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: method '{nameof(GenerateDefaultAsync)}' not found.");
-
-            var generic = method.MakeGenericMethod(type);
-            var task = generic.Invoke(this, [force]) as Task
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: '{nameof(GenerateDefaultAsync)}<{type.Name}>' returned null.");
-
-            await task;
-        }
+            await GenerateDefaultAsync(type, force).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task LoadAllAsync(bool generateIfMissing = true)
     {
         foreach (var type in _registered.Keys)
-        {
-            var method = typeof(ConfigurationManager)
-                .GetMethod(nameof(LoadAsync), BindingFlags.Public | BindingFlags.Instance)
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: method '{nameof(LoadAsync)}' not found.");
-
-            var generic = method.MakeGenericMethod(type);
-            var task = generic.Invoke(this, [generateIfMissing]) as Task
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: '{nameof(LoadAsync)}<{type.Name}>' returned null.");
-
-            await task;
-        }
+            await LoadAsync(type, generateIfMissing).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Loads all registered models while allowing the framework to replace a freshly
-    /// deserialized model before it is finally validated and cached. This is deliberately
-    /// internal: component contracts continue to expose the normal configuration API.
+    /// Loads all registered models with runtime overrides applied on top of the file values.
+    /// The overrides stay attached, so later reloads and updates re-apply them.
+    /// This is deliberately internal: component contracts continue to expose the normal configuration API.
     /// </summary>
-    internal async Task LoadAllWithRuntimeOverridesAsync(
+    internal Task LoadAllWithRuntimeOverridesAsync(
         bool generateIfMissing,
         Func<Type, string, ConfigModelBase, ConfigModelBase> applyOverrides)
     {
         ArgumentNullException.ThrowIfNull(applyOverrides);
-
-        foreach (var (type, sectionName) in _registered)
-        {
-            var path = GetFilePath(type);
-            if (!File.Exists(path))
-            {
-                if (!generateIfMissing)
-                    throw new FileNotFoundException(
-                        $"Config file for '{type.Name}' not found at: {path}");
-
-                await GenerateDefaultAsync(type).ConfigureAwait(false);
-            }
-
-            var config = await ReadUnvalidatedAsync(type).ConfigureAwait(false);
-            var overridden = applyOverrides(type, sectionName, config)
-                ?? throw new InvalidOperationException(
-                    $"Runtime override for configuration '{type.Name}' returned null.");
-            if (overridden.GetType() != type)
-                throw new InvalidOperationException(
-                    $"Runtime override for configuration '{type.Name}' returned '{overridden.GetType().Name}'.");
-
-            var validation = overridden.Validate();
-            if (!validation.IsValid)
-                throw new InvalidOperationException(
-                    $"Configuration '{type.Name}' is invalid: {validation}");
-
-            // Publishing happens only after every override and the final validation succeeds.
-            _loaded[type] = overridden;
-        }
+        RuntimeOverrides = applyOverrides;
+        return LoadAllAsync(generateIfMissing);
     }
 
     /// <summary>Creates an independent working copy for an atomic runtime override.</summary>
-    internal ConfigModelBase CloneForRuntimeOverride(ConfigModelBase config, Type type)
-    {
-        var json = JsonSerializer.Serialize(config, type, _jsonOptions);
-        return JsonSerializer.Deserialize(json, type, _jsonOptions) as ConfigModelBase
-            ?? throw new InvalidOperationException(
-                $"Failed to clone configuration '{type.Name}' for a runtime override.");
-    }
+    internal ConfigModelBase CloneForRuntimeOverride(ConfigModelBase config, Type type) =>
+        Deserialize(JsonSerializer.Serialize(config, type, _jsonOptions), type, "runtime override clone");
 
     /// <inheritdoc />
     public async Task ValidateAllAsync(bool allowMissingFiles = false)
@@ -198,53 +158,96 @@ public sealed class ConfigurationManager : IConfigurationManager
                     $"Config file for '{type.Name}' not found at: {path}");
             }
 
-            await LoadExistingAsync(type);
+            await LoadAsync(type, generateIfMissing: false).ConfigureAwait(false);
         }
     }
 
     /// <inheritdoc />
     public async Task ReloadAsync<T>() where T : ConfigModelBase, new()
     {
-        // Same as LoadAsync but always re-reads from disk even if already loaded
-        var path = GetFilePath<T>();
-
-        if (!File.Exists(path))
-            throw new FileNotFoundException(
-                $"Config file for '{typeof(T).Name}' not found at: {path}. " +
-                $"Call GenerateDefaultAsync<{typeof(T).Name}>() first.");
-
-        var json = await File.ReadAllTextAsync(path);
-        var config = JsonSerializer.Deserialize<T>(json, _jsonOptions)
-            ?? throw new InvalidOperationException(
-                $"Failed to deserialize '{typeof(T).Name}' from {path}");
-
-        var validation = config.Validate();
-        if (!validation.IsValid)
+        var result = await ReloadSectionAsync(typeof(T), changedBy: null).ConfigureAwait(false);
+        if (!result.IsValid)
             throw new InvalidOperationException(
-                $"Reloaded configuration '{typeof(T).Name}' is invalid: {validation}");
-
-        _loaded[typeof(T)] = config;
-
-        FireChanged(typeof(T), ConfigChangeKind.Reloaded);
+                $"Reloaded configuration '{typeof(T).Name}' is invalid: {result}");
     }
 
     /// <inheritdoc />
     public async Task ReloadAllAsync()
     {
-        foreach (var type in _registered.Keys)
+        var result = await ReloadAllSectionsAsync(changedBy: null).ConfigureAwait(false);
+        if (!result.IsValid)
+            throw new InvalidOperationException($"Reloaded configuration is invalid: {result}");
+    }
+
+    /// <summary>
+    /// Re-reads one section from disk, re-applies runtime overrides, and notifies handlers.
+    /// Returns an invalid result (and keeps the current values) when the file is malformed or invalid.
+    /// Throws <see cref="ConfigApplyException"/> when a change handler fails.
+    /// </summary>
+    internal async Task<ConfigValidationResult> ReloadSectionAsync(Type type, string? changedBy, CancellationToken ct = default)
+    {
+        ConfigChangedEventArgs args;
+        Task notification;
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            var method = typeof(ConfigurationManager)
-                .GetMethod(nameof(ReloadAsync), BindingFlags.Public | BindingFlags.Instance)
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: method '{nameof(ReloadAsync)}' not found.");
+            var prepared = await TryPrepareFromDiskAsync(type, ct).ConfigureAwait(false);
+            if (!prepared.Validation.IsValid)
+                return prepared.Validation;
 
-            var generic = method.MakeGenericMethod(type);
-            var task = generic.Invoke(this, null) as Task
-                ?? throw new InvalidOperationException(
-                    $"Reflection failed: '{nameof(ReloadAsync)}<{type.Name}>' returned null.");
-
-            await task;
+            args = Commit(prepared, ConfigChangeKind.Reloaded, changedBy);
+            notification = EnqueueNotification(args, ct);
         }
+        finally { _writeLock.Release(); }
+
+        await AwaitNotificationAsync(notification, args).ConfigureAwait(false);
+        return ConfigValidationResult.Valid();
+    }
+
+    /// <summary>
+    /// Re-reads every registered section. All files are validated first; if any is invalid,
+    /// nothing is committed and the combined errors are returned.
+    /// </summary>
+    internal async Task<ConfigValidationResult> ReloadAllSectionsAsync(string? changedBy, CancellationToken ct = default)
+    {
+        var pending = new List<(ConfigChangedEventArgs Args, Task Notification)>();
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var prepared = new List<PreparedSection>();
+            var errors = new List<string>();
+            foreach (var type in _registered.Keys)
+            {
+                var section = await TryPrepareFromDiskAsync(type, ct).ConfigureAwait(false);
+                if (section.Validation.IsValid)
+                    prepared.Add(section);
+                else
+                    errors.AddRange(section.Validation.Errors.Select(e => $"{type.Name}: {e}"));
+            }
+
+            if (errors.Count > 0)
+                return ConfigValidationResult.Invalid(errors);
+
+            foreach (var section in prepared)
+            {
+                var args = Commit(section, ConfigChangeKind.Reloaded, changedBy);
+                pending.Add((args, EnqueueNotification(args, ct)));
+            }
+        }
+        finally { _writeLock.Release(); }
+
+        ConfigApplyException? firstFailure = null;
+        foreach (var (args, notification) in pending)
+        {
+            try { await AwaitNotificationAsync(notification, args).ConfigureAwait(false); }
+            catch (ConfigApplyException ex) { firstFailure ??= ex; }
+        }
+        if (firstFailure is not null)
+            throw firstFailure;
+
+        return ConfigValidationResult.Valid();
     }
 
     /// <inheritdoc />
@@ -277,7 +280,18 @@ public sealed class ConfigurationManager : IConfigurationManager
     {
         var type = ResolveTypeForSection(sectionName);
         _loaded.TryGetValue(type, out var instance);
-        return ConfigSchemaBuilder.Build(type, sectionName, instance, includeSecrets);
+        var schema = ConfigSchemaBuilder.Build(type, sectionName, instance, includeSecrets);
+
+        if (_state.TryGetValue(type, out var state) && state.OverriddenPaths.Count > 0)
+        {
+            var overridden = state.OverriddenPaths
+                .Select(p => string.Join('.', p))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var field in schema.Fields)
+                field.IsOverridden = overridden.Contains(field.Path);
+        }
+
+        return schema;
     }
 
     /// <inheritdoc />
@@ -289,10 +303,10 @@ public sealed class ConfigurationManager : IConfigurationManager
     {
         var type = ResolveTypeForSection(sectionName);
 
-        object deserialized;
+        ConfigModelBase deserialized;
         try
         {
-            deserialized = JsonSerializer.Deserialize(json, type, _jsonOptions)
+            deserialized = JsonSerializer.Deserialize(json, type, _jsonOptions) as ConfigModelBase
                 ?? throw new InvalidOperationException("Deserialized config was null.");
         }
         catch (JsonException ex)
@@ -300,19 +314,27 @@ public sealed class ConfigurationManager : IConfigurationManager
             return ConfigValidationResult.Invalid($"Invalid JSON: {ex.Message}");
         }
 
-        // Preserve any masked secret fields by copying from the existing loaded instance.
-        if (_loaded.TryGetValue(type, out var previous))
-            PreserveMaskedSecrets(type, previous, deserialized);
+        ConfigChangedEventArgs args;
+        Task notification;
 
-        var validation = ((ConfigModelBase)deserialized).Validate();
-        if (!validation.IsValid)
-            return validation;
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Preserve any masked secret fields by copying from the existing loaded instance.
+            if (_loaded.TryGetValue(type, out var previous))
+                PreserveMaskedSecrets(type, previous, deserialized);
 
-        var path = GetFilePath(type);
-        await WriteObjectToFileAsync(path, deserialized, type, ct).ConfigureAwait(false);
-        _loaded[type] = deserialized;
+            var prepared = Prepare(type, StripRuntimeOverrides(type, deserialized));
+            if (!prepared.Validation.IsValid)
+                return prepared.Validation;
 
-        FireChanged(type, ConfigChangeKind.Updated, changedBy);
+            await WriteFileAsync(GetFilePath(type), prepared.State!.PersistedJson, ct).ConfigureAwait(false);
+            args = Commit(prepared, ConfigChangeKind.Updated, changedBy);
+            notification = EnqueueNotification(args, ct);
+        }
+        finally { _writeLock.Release(); }
+
+        await AwaitNotificationAsync(notification, args).ConfigureAwait(false);
         return ConfigValidationResult.Valid();
     }
 
@@ -320,17 +342,317 @@ public sealed class ConfigurationManager : IConfigurationManager
     public async Task ResetSectionAsync(string sectionName, string? changedBy = null, CancellationToken ct = default)
     {
         var type = ResolveTypeForSection(sectionName);
-        var defaults = Activator.CreateInstance(type)
+        var defaults = Activator.CreateInstance(type) as ConfigModelBase
             ?? throw new InvalidOperationException($"Could not instantiate '{type.Name}' for reset.");
-        var path = GetFilePath(type);
-        await WriteObjectToFileAsync(path, defaults, type, ct).ConfigureAwait(false);
-        _loaded[type] = defaults;
-        FireChanged(type, ConfigChangeKind.Reset, changedBy);
+
+        ConfigChangedEventArgs args;
+        Task notification;
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Defaults may legitimately be incomplete (e.g. no host yet) — reset never validates.
+            var prepared = Prepare(type, defaults, validate: false);
+            await WriteFileAsync(GetFilePath(type), prepared.State!.PersistedJson, ct).ConfigureAwait(false);
+            args = Commit(prepared, ConfigChangeKind.Reset, changedBy);
+            notification = EnqueueNotification(args, ct);
+        }
+        finally { _writeLock.Release(); }
+
+        await AwaitNotificationAsync(notification, args).ConfigureAwait(false);
     }
+
+    // ─── Framework hooks (file watcher) ───────────────────────────────────────
+
+    /// <summary>Returns the registered type whose file is <paramref name="fullPath"/>, or null.</summary>
+    internal Type? FindTypeForFile(string fullPath)
+    {
+        var target = Path.GetFullPath(fullPath);
+        return _registered.Keys.FirstOrDefault(t =>
+            string.Equals(Path.GetFullPath(GetFilePath(t)), target, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Returns the section name a type was registered under.</summary>
+    internal string GetSectionName(Type type) =>
+        _registered.TryGetValue(type, out var name) ? name : string.Empty;
+
+    /// <summary>
+    /// True when <paramref name="content"/> is exactly what this manager last wrote to or read
+    /// from <paramref name="path"/> — used to ignore file-watcher events caused by our own writes.
+    /// </summary>
+    internal bool IsKnownContent(string path, string content) =>
+        _knownContent.TryGetValue(Path.GetFullPath(path), out var hash) && hash == Hash(content);
 
     // ─── Internals ────────────────────────────────────────────────────────────
 
-    private Type ResolveTypeForSection(string sectionName)
+    /// <summary>File values vs effective values for one section, as JSON snapshots.</summary>
+    private sealed record SectionState(string PersistedJson, string EffectiveJson, IReadOnlyList<string[]> OverriddenPaths);
+
+    private sealed record PreparedSection(Type Type, ConfigModelBase? Effective, SectionState? State, ConfigValidationResult Validation);
+
+    /// <summary>
+    /// Applies runtime overrides to <paramref name="persisted"/> and validates the result.
+    /// Nothing is stored — call <see cref="Commit"/> once the change should go live.
+    /// </summary>
+    private PreparedSection Prepare(Type type, ConfigModelBase persisted, bool validate = true)
+    {
+        var persistedJson = JsonSerializer.Serialize(persisted, type, _jsonOptions);
+        var effective = ApplyRuntimeOverrides(type, persisted);
+
+        if (validate)
+        {
+            var validation = effective.Validate();
+            if (!validation.IsValid)
+                return new PreparedSection(type, null, null, validation);
+        }
+
+        string effectiveJson;
+        IReadOnlyList<string[]> overridden;
+        if (ReferenceEquals(effective, persisted))
+        {
+            effectiveJson = persistedJson;
+            overridden = [];
+        }
+        else
+        {
+            effectiveJson = JsonSerializer.Serialize(effective, type, _jsonOptions);
+            overridden = ConfigDiff.DiffPaths(JsonNode.Parse(persistedJson), JsonNode.Parse(effectiveJson));
+        }
+
+        return new PreparedSection(type, effective,
+            new SectionState(persistedJson, effectiveJson, overridden), ConfigValidationResult.Valid());
+    }
+
+    /// <summary>Publishes a prepared section and builds the change event (with a detached old snapshot).</summary>
+    private ConfigChangedEventArgs Commit(PreparedSection prepared, ConfigChangeKind kind, string? changedBy)
+    {
+        var type = prepared.Type;
+        var old = _state.TryGetValue(type, out var previous)
+            ? Deserialize(previous.EffectiveJson, type, "previous snapshot")
+            : null;
+
+        CommitSilently(prepared);
+
+        return new ConfigChangedEventArgs
+        {
+            SectionName = GetSectionName(type),
+            Kind = kind,
+            ChangedBy = changedBy,
+            ConfigType = type,
+            OldValue = old,
+            NewValue = prepared.Effective
+        };
+    }
+
+    private void CommitSilently(PreparedSection prepared)
+    {
+        _loaded[prepared.Type] = prepared.Effective!;
+        _state[prepared.Type] = prepared.State!;
+    }
+
+    private ConfigModelBase ApplyRuntimeOverrides(Type type, ConfigModelBase persisted)
+    {
+        var overrides = RuntimeOverrides;
+        if (overrides is null) return persisted;
+
+        // The callback receives a clone so the file values are never mutated.
+        var working = CloneForRuntimeOverride(persisted, type);
+        var result = overrides(type, GetSectionName(type), working)
+            ?? throw new InvalidOperationException(
+                $"Runtime override for configuration '{type.Name}' returned null.");
+        if (result.GetType() != type)
+            throw new InvalidOperationException(
+                $"Runtime override for configuration '{type.Name}' returned '{result.GetType().Name}'.");
+        return result;
+    }
+
+    /// <summary>
+    /// Turns an effective-looking instance (e.g. a mutated <c>Get&lt;T&gt;()</c> result or an admin UI
+    /// payload) back into file values: every overridden field the caller left at its overridden value
+    /// is replaced by the value from the file, so runtime-only overrides never reach disk.
+    /// </summary>
+    private ConfigModelBase StripRuntimeOverrides(Type type, ConfigModelBase incoming)
+    {
+        if (!_state.TryGetValue(type, out var state) || state.OverriddenPaths.Count == 0)
+            return incoming;
+
+        var node = JsonSerializer.SerializeToNode(incoming, type, _jsonOptions)!;
+        var persisted = JsonNode.Parse(state.PersistedJson);
+        var effective = JsonNode.Parse(state.EffectiveJson);
+
+        foreach (var path in state.OverriddenPaths)
+        {
+            if (path.Length == 0) continue;
+            if (!JsonNode.DeepEquals(GetAt(node, path), GetAt(effective, path)))
+                continue; // the caller explicitly changed this value — keep it
+
+            if (GetAt(node, path[..^1]) is not JsonObject parent) continue;
+            var fileValue = GetAt(persisted, path)?.DeepClone();
+            if (fileValue is null)
+                parent.Remove(path[^1]);
+            else
+                parent[path[^1]] = fileValue;
+        }
+
+        return node.Deserialize(type, _jsonOptions) as ConfigModelBase
+            ?? throw new InvalidOperationException($"Failed to rebuild '{type.Name}' without runtime overrides.");
+    }
+
+    private static JsonNode? GetAt(JsonNode? node, IEnumerable<string> path)
+    {
+        foreach (var segment in path)
+        {
+            if (node is not JsonObject obj) return null;
+            node = obj[segment];
+        }
+        return node;
+    }
+
+    private async Task LoadAsync(Type type, bool generateIfMissing)
+    {
+        var path = GetFilePath(type);
+
+        if (!File.Exists(path))
+        {
+            if (!generateIfMissing)
+                throw new FileNotFoundException(
+                    $"Config file for '{type.Name}' not found at: {path}");
+
+            await GenerateDefaultAsync(type, force: false).ConfigureAwait(false);
+        }
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var persisted = Deserialize(await ReadFileAsync(path, CancellationToken.None).ConfigureAwait(false), type, path);
+            var prepared = Prepare(type, persisted);
+            if (!prepared.Validation.IsValid)
+                throw new InvalidOperationException(
+                    $"Configuration '{type.Name}' is invalid: {prepared.Validation}");
+
+            CommitSilently(prepared);
+        }
+        finally { _writeLock.Release(); }
+    }
+
+    private async Task<PreparedSection> TryPrepareFromDiskAsync(Type type, CancellationToken ct)
+    {
+        var path = GetFilePath(type);
+        if (!File.Exists(path))
+            throw new FileNotFoundException(
+                $"Config file for '{type.Name}' not found at: {path}. " +
+                $"Call GenerateDefaultAsync<{type.Name}>() first.");
+
+        ConfigModelBase persisted;
+        try
+        {
+            persisted = Deserialize(await ReadFileAsync(path, ct).ConfigureAwait(false), type, path);
+        }
+        catch (JsonException ex)
+        {
+            return new PreparedSection(type, null, null, ConfigValidationResult.Invalid($"Invalid JSON: {ex.Message}"));
+        }
+
+        return Prepare(type, persisted);
+    }
+
+    private async Task GenerateDefaultAsync(Type type, bool force)
+    {
+        var path = GetFilePath(type);
+        if (!force && File.Exists(path)) return;
+
+        var defaults = Activator.CreateInstance(type)
+            ?? throw new InvalidOperationException($"Could not instantiate '{type.Name}'.");
+        await WriteFileAsync(path, JsonSerializer.Serialize(defaults, type, _jsonOptions), CancellationToken.None)
+            .ConfigureAwait(false);
+    }
+
+    // ─── Notifications ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Queues handlers for a committed change. Must be called while holding the write lock so
+    /// notifications run in commit order. Handlers always run on the thread pool, never inline.
+    /// </summary>
+    private Task EnqueueNotification(ConfigChangedEventArgs args, CancellationToken ct)
+    {
+        lock (_notifyGate)
+        {
+            var task = _notifyTail
+                .ContinueWith(_ => RunHandlersAsync(args, ct), CancellationToken.None,
+                    TaskContinuationOptions.None, TaskScheduler.Default)
+                .Unwrap();
+            _notifyTail = task.ContinueWith(static _ => { }, TaskScheduler.Default);
+            return task;
+        }
+    }
+
+    private async Task RunHandlersAsync(ConfigChangedEventArgs args, CancellationToken ct)
+    {
+        var outer = _notifying.Value;
+        _notifying.Value = this;
+        try
+        {
+            ConfigChanged?.Invoke(this, args);
+            if (ChangedAsync is { } handler)
+                await handler(args, ct).ConfigureAwait(false);
+        }
+        finally { _notifying.Value = outer; }
+    }
+
+    private async Task AwaitNotificationAsync(Task notification, ConfigChangedEventArgs args)
+    {
+        if (_notifying.Value == this)
+        {
+            // Called from inside one of our own change handlers: the new notification is queued
+            // behind the running one, so waiting here would deadlock. It runs once the handler returns.
+            _ = notification.ContinueWith(static t => _ = t.Exception,
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            return;
+        }
+
+        try
+        {
+            await notification.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            throw new ConfigApplyException(args.SectionName, ex);
+        }
+    }
+
+    // ─── File IO ──────────────────────────────────────────────────────────────
+
+    private async Task WriteFileAsync(string path, string json, CancellationToken ct)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+
+        // Write-then-rename so readers (and crashes) never see a half-written file.
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
+        RememberContent(path, json);
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    private async Task<string> ReadFileAsync(string path, CancellationToken ct)
+    {
+        var json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+        RememberContent(path, json);
+        return json;
+    }
+
+    private void RememberContent(string path, string content) =>
+        _knownContent[Path.GetFullPath(path)] = Hash(content);
+
+    private static string Hash(string content) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+
+    private static ConfigModelBase Deserialize(string json, Type type, string source) =>
+        JsonSerializer.Deserialize(json, type, _jsonOptions) as ConfigModelBase
+            ?? throw new InvalidOperationException($"Failed to deserialize '{type.Name}' from {source}");
+
+    internal Type ResolveTypeForSection(string sectionName)
     {
         var key = sectionName ?? string.Empty;
         foreach (var (type, subName) in _registered)
@@ -399,44 +721,6 @@ public sealed class ConfigurationManager : IConfigurationManager
         }
     }
 
-    private void FireChanged(Type type, ConfigChangeKind kind, string? changedBy = null)
-    {
-        var handler = ConfigChanged;
-        if (handler is null) return;
-        var section = _registered.TryGetValue(type, out var subName) ? subName : string.Empty;
-        handler(this, new ConfigChangedEventArgs
-        {
-            SectionName = section,
-            Kind = kind,
-            ChangedBy = changedBy
-        });
-    }
-
-    private string GetFilePath<T>() where T : ConfigModelBase, new()
-    {
-        return GetFilePath(typeof(T));
-    }
-
-    private async Task WriteToFileAsync<T>(string path, T config) where T : ConfigModelBase, new()
-    {
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
-
-        var json = JsonSerializer.Serialize(config, _jsonOptions);
-        await File.WriteAllTextAsync(path, json);
-    }
-
-    private async Task WriteObjectToFileAsync(string path, object config, Type type, CancellationToken ct)
-    {
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
-
-        var json = JsonSerializer.Serialize(config, type, _jsonOptions);
-        await File.WriteAllTextAsync(path, json, ct).ConfigureAwait(false);
-    }
-
     private string GetFilePath(Type type)
     {
         if (!_registered.TryGetValue(type, out var subName))
@@ -446,58 +730,5 @@ public sealed class ConfigurationManager : IConfigurationManager
 
         var fileName = string.IsNullOrEmpty(subName) ? "config.json" : $"config.{subName}.json";
         return Path.Combine(_baseDirectory, fileName);
-    }
-
-    private async Task LoadExistingAsync(Type type)
-    {
-        var method = typeof(ConfigurationManager)
-            .GetMethod(nameof(LoadExistingAsync), BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null)
-            ?? throw new InvalidOperationException(
-                $"Reflection failed: method '{nameof(LoadExistingAsync)}' not found.");
-
-        var generic = method.MakeGenericMethod(type);
-        var task = generic.Invoke(this, null) as Task
-            ?? throw new InvalidOperationException(
-                $"Reflection failed: '{nameof(LoadExistingAsync)}<{type.Name}>' returned null.");
-
-        await task;
-    }
-
-    private async Task LoadExistingAsync<T>() where T : ConfigModelBase, new()
-    {
-        var path = GetFilePath<T>();
-        var json = await File.ReadAllTextAsync(path);
-        var config = JsonSerializer.Deserialize<T>(json, _jsonOptions)
-            ?? throw new InvalidOperationException(
-                $"Failed to deserialize '{typeof(T).Name}' from {path}");
-
-        var validation = config.Validate();
-        if (!validation.IsValid)
-            throw new InvalidOperationException(
-                $"Configuration '{typeof(T).Name}' is invalid: {validation}");
-
-        _loaded[typeof(T)] = config;
-    }
-
-    private async Task<ConfigModelBase> ReadUnvalidatedAsync(Type type)
-    {
-        var path = GetFilePath(type);
-        var json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
-        return JsonSerializer.Deserialize(json, type, _jsonOptions) as ConfigModelBase
-            ?? throw new InvalidOperationException(
-                $"Failed to deserialize '{type.Name}' from {path}");
-    }
-
-    private async Task GenerateDefaultAsync(Type type)
-    {
-        var method = typeof(ConfigurationManager)
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Single(m => m.Name == nameof(GenerateDefaultAsync) && m.IsGenericMethodDefinition)
-            ?? throw new InvalidOperationException(
-                $"Reflection failed: method '{nameof(GenerateDefaultAsync)}' not found.");
-        var task = method.MakeGenericMethod(type).Invoke(this, [false]) as Task
-            ?? throw new InvalidOperationException(
-                $"Reflection failed: '{nameof(GenerateDefaultAsync)}<{type.Name}>' returned null.");
-        await task.ConfigureAwait(false);
     }
 }

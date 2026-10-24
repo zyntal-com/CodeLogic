@@ -1,6 +1,42 @@
 # Changelog
 
-## Unreleased
+## Unreleased (4.9)
+
+### Added
+
+- **Live config changes for libraries.** A library can implement the new optional
+  `IConfigReloadable` interface to apply a config change without a restart. It receives the
+  old and new section values and applies only what changed, e.g. reconnecting one database
+  out of three while the others stay connected. Called after `Libraries.UpdateConfigAsync`,
+  `Libraries.ResetConfigAsync`, the new `Libraries.ReloadConfigAsync`, and the file watcher.
+- `ConfigDiff`: `Keyed(old, new)` splits keyed instance sections into added / removed /
+  changed / unchanged; `ChangedProperties` and `RequiresRestart` report changed fields.
+- `ConfigChangedEventArgs` now carries `ConfigType`, `OldValue` / `NewValue` and
+  `GetOld<T>()` / `GetNew<T>()`.
+- Opt-in config file watcher: `libraries.configHotReload { enabled, debounceMs }` in
+  `CodeLogic.json` reloads a library section when its `config*.json` file is edited. Invalid
+  edits are logged and ignored; the framework's own writes don't re-trigger it.
+- `ConfigChangedEvent` (every committed change) and `ConfigApplyFailedEvent` (a saved change a
+  library could not apply). `ConfigReloadedEvent` is now actually published.
+- `LoadedLibrary.ConfigApplyError`; a library that failed to apply a change reports Degraded
+  health until a later change applies.
+- `ConfigField.IsOverridden` in `GetSchema` marks fields set by runtime overrides.
+
+### Changed
+
+- `LibraryManager` / `Libraries` `UpdateConfigAsync` and `ResetConfigAsync` return
+  `ConfigApplyResult` (validation result plus apply error) instead of `ConfigValidationResult`.
+  `IsValid` and `Errors` are still there; `Applied` is new. Recompile callers.
+- Config files are written atomically (temp file + rename), and changes to config sections
+  are serialized.
+
+### Fixed
+
+- Runtime config overrides (`OverrideConfig`) were lost on reload/update and were written to
+  the config file when the section was saved. They are now re-applied after every change and
+  never persisted.
+
+## 4.8.x
 
 ### Changed
 

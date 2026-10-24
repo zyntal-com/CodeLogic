@@ -18,6 +18,25 @@ public sealed class ConfigChangedEventArgs : EventArgs
 
     /// <summary>Timestamp of the change in UTC.</summary>
     public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
+
+    /// <summary>The registered config type of the section.</summary>
+    public Type? ConfigType { get; init; }
+
+    /// <summary>
+    /// Snapshot of the effective config (file values + runtime overrides) before the change.
+    /// A detached copy — never the instance previously returned by <c>Get&lt;T&gt;()</c>.
+    /// Null when the section was not loaded before.
+    /// </summary>
+    public ConfigModelBase? OldValue { get; init; }
+
+    /// <summary>The effective config after the change — the instance <c>Get&lt;T&gt;()</c> now returns.</summary>
+    public ConfigModelBase? NewValue { get; init; }
+
+    /// <summary>Typed access to <see cref="OldValue"/>. Null when absent or of another type.</summary>
+    public T? GetOld<T>() where T : ConfigModelBase => OldValue as T;
+
+    /// <summary>Typed access to <see cref="NewValue"/>. Null when absent or of another type.</summary>
+    public T? GetNew<T>() where T : ConfigModelBase => NewValue as T;
 }
 
 /// <summary>Why a config change event fired.</summary>
