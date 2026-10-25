@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (4.9)
+## 4.9.x
 
 ### Added
 
@@ -24,6 +24,8 @@
 
 ### Changed
 
+- Package author and copyright are now Zyntal.com. NuGet release notes come from this
+  changelog, and the NuGet readme no longer shows the oversized logo.
 - `LibraryManager` / `Libraries` `UpdateConfigAsync` and `ResetConfigAsync` return
   `ConfigApplyResult` (validation result plus apply error) instead of `ConfigValidationResult`.
   `IsValid` and `Errors` are still there; `Applied` is new. Recompile callers.

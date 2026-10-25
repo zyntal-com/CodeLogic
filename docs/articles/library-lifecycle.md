@@ -154,7 +154,7 @@ public LibraryManifest Manifest => new()
     Name        = "Database Library",        // shown in console output
     Version     = "1.0.0",
     Description = "Manages database access",
-    Author      = "Media2A",
+    Author      = "Zyntal.com",
     Dependencies = [
         new LibraryDependency("MyApp.Config", "1.0.0")
     ],
