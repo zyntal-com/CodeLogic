@@ -725,7 +725,7 @@ Both unchanged API — just delegate to runtime.
     <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Version>3.0.0</Version>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>
       Modular .NET 10 framework with lifecycle-managed libraries,
       applications, and plugins. Zero external dependencies.

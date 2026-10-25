@@ -32,7 +32,7 @@
       "_appLogoPath": "images/logo.svg",
       "_appFaviconPath": "images/favicon.ico",
       "_enableSearch": true,
-      "_appFooter": "Copyright &copy; 2026 Media2A. Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
+      "_appFooter": "Copyright &copy; 2026 Zyntal.com. Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
       "_appName": "CodeLogic 4"
     },
     "template": ["default", "modern"],

@@ -38,8 +38,8 @@
     <AssemblyVersion>$([System.Version]::Parse($(_CleanVersion)).Major).$([System.Version]::Parse($(_CleanVersion)).Minor).0.0</AssemblyVersion>
     <FileVersion>$(_RootVersion).0.0</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
-    <Authors>Media2A</Authors>
-    <Copyright>Copyright © 2026 Media2A</Copyright>
+    <Authors>Zyntal.com</Authors>
+    <Copyright>Copyright © 2026 Zyntal.com</Copyright>
     <Description>Modular .NET 10 framework with lifecycle-managed libraries, applications, and plugins. Zero external NuGet dependencies.</Description>
     <PackageId>CodeLogic</PackageId>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -54,7 +54,30 @@
   <ItemGroup>
     <None Include="../README.nuget.md" Pack="true" PackagePath="/" />
     <None Include="../LICENSE" Pack="true" PackagePath="/" />
+    <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />
   </ItemGroup>
+  <!--
+    Populate PackageReleaseNotes from CHANGELOG.md so the "Release Notes" section on
+    NuGet.org shows what changed (same as CodeLogic.Libs). NuGet rejects release notes
+    over 35 000 characters, so long notes are cut back to a line boundary and point at
+    the CHANGELOG.md that ships inside the package.
+  -->
+  <Target Name="_InjectChangelogIntoPackageReleaseNotes"
+          BeforeTargets="GenerateNuspec"
+          Condition="Exists('$(MSBuildThisFileDirectory)../CHANGELOG.md')">
+    <PropertyGroup>
+      <_ChangelogText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../CHANGELOG.md'))</_ChangelogText>
+      <_ChangelogLimit>30000</_ChangelogLimit>
+      <_ChangelogHead>$(_ChangelogText.Substring(0, $([System.Math]::Min($(_ChangelogLimit), $(_ChangelogText.Length)))))</_ChangelogHead>
+      <_ChangelogTrimmed>$(_ChangelogHead.Substring(0, $([System.Math]::Max(0, $(_ChangelogHead.LastIndexOf('%0A'))))))</_ChangelogTrimmed>
+      <PackageReleaseNotes Condition="$(_ChangelogText.Length) &lt;= $(_ChangelogLimit)">$(_ChangelogText)</PackageReleaseNotes>
+      <PackageReleaseNotes Condition="$(_ChangelogText.Length) &gt; $(_ChangelogLimit)">$(_ChangelogTrimmed)
+
+---
+
+Release notes truncated to fit NuGet's 35 000 character limit. The complete changelog ships inside this package as CHANGELOG.md.</PackageReleaseNotes>
+    </PropertyGroup>
+  </Target>
   <!-- Treat warnings as errors for cleaner code -->
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>

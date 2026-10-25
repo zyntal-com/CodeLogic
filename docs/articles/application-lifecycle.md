@@ -39,7 +39,7 @@ public ApplicationManifest Manifest => new()
     Name        = "HomePoint",           // shown in console output and health reports
     Version     = "1.0.0",
     Description = "Self-hosted home automation platform",
-    Author      = "Media2A"
+    Author      = "Zyntal.com"
 };
 ```
 

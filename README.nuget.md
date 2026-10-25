@@ -1,5 +1,3 @@
-![CodeLogic](https://raw.githubusercontent.com/zyntal-com/CodeLogic/main/logo.svg)
-
 # CodeLogic 4
 
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic?label=nuget&color=blue)](https://www.nuget.org/packages/CodeLogic)
