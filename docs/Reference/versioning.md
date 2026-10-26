@@ -77,6 +77,9 @@ Both repositories build from branch pushes. Nothing is written back to the repo.
 | `prerelease` | Publishes `4.9.<run>-preview+<sha>` to NuGet, tagged as a GitHub pre-release. |
 | `release` | Publishes `4.9.<run>+<sha>` to NuGet, tagged as a full GitHub release. |
 
+The **Promote main** workflow (Actions tab, run manually) merges `main` into `prerelease` or
+`release` and starts the publish. Nothing promotes `main` automatically.
+
 A local or developer build leaves the patch at `0`, producing a stable `4.9.0`.
 That value is never published — it only keeps local builds reproducible.
 
