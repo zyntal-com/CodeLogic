@@ -2,7 +2,7 @@
   <img src="logo.svg" alt="CodeLogic" width="128" height="128">
 </p>
 
-<h1 align="center">CodeLogic 4</h1>
+<h1 align="center">CodeLogic 5</h1>
 
 <p align="center">
   <a href="https://www.nuget.org/packages/CodeLogic"><img src="https://img.shields.io/nuget/v/CodeLogic?label=nuget&color=blue" alt="NuGet"></a>
@@ -28,6 +28,41 @@ CodeLogic gives you a **structured lifecycle** out of the box:
 dotnet add package CodeLogic
 ```
 
+## What's new in 5.0
+
+- **.NET 11 and C# 15.** CodeLogic 5 targets `net11.0`; the 4.9.x line stays available for .NET 10.
+- **`Result` and `Result<T>` are unions** (`Ok | Error` and `T | Error`). A `switch` over a result is checked
+  for exhaustiveness by the compiler, and results compare by value.
+- **`Error` is a closed record** with one subtype per kind (`NotFoundError`, `ValidationError`,
+  `ConflictError`, `TimeoutError`, ...), so switching on the kind is exhaustive too.
+- **Framework events share a closed base** (`FrameworkEvent`): subscribe once to receive all of them.
+- **Faster logging and events:** a background log writer, near-free disabled log levels, and lock-free
+  event publishing.
+- **`Result.ThrowIfFailure()`** and **`ResultFailedException`** (which carries the `Error`) for code where a
+  failure is a bug: tests, scripts, startup.
+
+All 4.x `Result` members still compile. See [Migrating to 5.0](docs/articles/migrating-to-5.md).
+
+## Results
+
+Expected failures are values, not exceptions:
+
+```csharp
+Result<User> found = await users.FindAsync(id);
+
+var message = found switch
+{
+    User user           => $"Hello {user.Name}",
+    NotFoundError       => "No such user",
+    Error error         => error.Message,
+    null                => "Empty result",
+};
+
+// Where a failure is a bug, throw instead:
+User admin = (await users.FindAsync(adminId)).ValueOrThrow();
+(await users.DeleteAsync(oldId)).ThrowIfFailure();
+```
+
 ## Quick Start
 
 ```csharp
@@ -39,8 +74,8 @@ var result = await CodeLogic.InitializeAsync(opts =>
 if (result.ShouldExit) return;
 
 // Load optional libraries (each is a separate NuGet package)
-await Libraries.LoadAsync<MySQL2Library>();
 await Libraries.LoadAsync<MailLibrary>();
+await Libraries.LoadAsync<StorageLibrary>();
 
 // Register your application
 CodeLogic.RegisterApplication(new MyApplication());
@@ -198,10 +233,10 @@ The [CodeLogic.* library family](https://github.com/zyntal-com/CodeLogic.Libs) p
 
 | Package | Description |
 |---------|-------------|
-| [CodeLogic.Common](https://www.nuget.org/packages/CodeLogic.Common) | Shared utilities — hashing, caching, imaging, compression |
-| [CodeLogic.MySQL2](https://www.nuget.org/packages/CodeLogic.MySQL2) | MySQL with LINQ query builder, table sync, migrations |
-| [CodeLogic.SQLite](https://www.nuget.org/packages/CodeLogic.SQLite) | SQLite with connection pooling and LINQ queries |
-| [CodeLogic.PostgreSQL](https://www.nuget.org/packages/CodeLogic.PostgreSQL) | PostgreSQL integration |
+| [CodeLogic.Common](https://www.nuget.org/packages/CodeLogic.Common) | Shared utilities: hashing, caching, scheduling, resilience, compression |
+| [CodeLogic.Imaging](https://www.nuget.org/packages/CodeLogic.Imaging) | Image editing: resize, crop, rotate, filters, watermarks, format conversion |
+| [CodeLogic.Data](https://www.nuget.org/packages/CodeLogic.Data) | Unified database framework: LINQ queries, repositories, joins, transactions, schema sync, migrations, backups |
+| CodeLogic.Data.MySql / .PostgreSql / .SqlServer / .Sqlite | The database providers for CodeLogic.Data |
 | [CodeLogic.Mail](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP/IMAP email with template engine |
 | [CodeLogic.Storage](https://www.nuget.org/packages/CodeLogic.Storage) | Provider-neutral mounted storage for local filesystems, S3/R2/MinIO, FTP/FTPS, SFTP, WebDAV, Azure Blob, Google Cloud Storage, and OpenStack Swift |
 | [CodeLogic.SocialConnect](https://www.nuget.org/packages/CodeLogic.SocialConnect) | Discord webhooks + Steam Web API |
@@ -210,6 +245,9 @@ The [CodeLogic.* library family](https://github.com/zyntal-com/CodeLogic.Libs) p
 | [CodeLogic.SystemStats](https://www.nuget.org/packages/CodeLogic.SystemStats) | Cross-platform CPU/memory/process monitoring |
 | [CodeLogic.GitHelper](https://www.nuget.org/packages/CodeLogic.GitHelper) | Git repository management |
 | [CodeLogic.TwoFactorAuth](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth) | TOTP 2FA + QR code generation |
+
+In 5.x, CodeLogic.Data replaces CodeLogic.MySQL2, CodeLogic.MSSQL, CodeLogic.PostgreSQL and CodeLogic.SQLite,
+which stay on the 4.9.x line.
 
 Each library follows the same lifecycle pattern — load it with `Libraries.LoadAsync<T>()`, configure it via its auto-generated JSON config file, and use it.
 
@@ -226,6 +264,8 @@ health checks, and native-provider access. Existing `CodeLogic.StorageS3` users 
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
+- [Migrating to 5.0](docs/articles/migrating-to-5.md)
+- [Results and Errors](docs/Core/results.md)
 - [Application Lifecycle](docs/articles/application-lifecycle.md)
 - [Library Lifecycle](docs/articles/library-lifecycle.md)
 - [Plugins](docs/articles/plugins.md)

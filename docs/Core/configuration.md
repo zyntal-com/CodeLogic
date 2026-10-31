@@ -144,24 +144,24 @@ A reload **replaces** the in-memory instance. Code that stored the result of `Ge
 
 Every save / update / reload / reset raises `ConfigChanged` with the section, the kind of change, and `OldValue` / `NewValue` snapshots. Notifications are delivered in commit order, and the call that made the change waits for them.
 
-### Live reload for libraries (4.9.0+)
+### Live reload for libraries
 
 A library opts in to applying changes while running by implementing `IConfigReloadable` next to `ILibrary`:
 
 ```csharp
-public sealed class MySQL2Library : ILibrary, IConfigReloadable
+public sealed class DataLibrary : ILibrary, IConfigReloadable
 {
     public async Task OnConfigChangedAsync(LibraryContext ctx, ConfigChangedEventArgs change, CancellationToken ct)
     {
-        if (change.SectionName != "mysql") return;
+        if (change.SectionName != "data") return;
 
         var diff = ConfigDiff.Keyed(
-            change.GetOld<DatabaseConfiguration>()?.Databases,
-            change.GetNew<DatabaseConfiguration>()!.Databases);
+            change.GetOld<DataConfig>()?.Connections,
+            change.GetNew<DataConfig>()!.Connections);
 
-        foreach (var (id, _) in diff.Removed)        await RemoveDatabaseAsync(id, ct);
-        foreach (var (id, c) in diff.Changed)        await ReplaceDatabaseAsync(id, c.New, ct);
-        foreach (var (id, cfg) in diff.Added)        await AddDatabaseAsync(id, cfg, ct);
+        foreach (var (id, _) in diff.Removed)        await RemoveConnectionAsync(id, ct);
+        foreach (var (id, c) in diff.Changed)        await ReplaceConnectionAsync(id, c.New, ct);
+        foreach (var (id, cfg) in diff.Added)        await AddConnectionAsync(id, cfg, ct);
         // diff.Unchanged → untouched; those connections stay open
     }
 }
@@ -175,7 +175,7 @@ public sealed class MySQL2Library : ILibrary, IConfigReloadable
 Admin UIs use `ConfigApplyResult`:
 
 ```csharp
-var result = await Libraries.UpdateConfigAsync("CL.MySQL2", "mysql", json, changedBy: user);
+var result = await Libraries.UpdateConfigAsync("CL.Data", "data", json, changedBy: user);
 if (!result.IsValid)        ShowErrors(result.Errors);        // nothing saved
 else if (!result.Applied)   ShowWarning(result.ApplyError!);  // saved, not applied
 ```

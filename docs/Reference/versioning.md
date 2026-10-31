@@ -54,16 +54,16 @@ deployed binary can always be traced back to the exact commit that produced it.
 ## Assembly identity
 
 `AssemblyVersion` and `FileVersion` are **not** the package version. They are
-pinned to `Major.Minor.0.0` — for the 4.9 line, always `4.9.0.0`.
+pinned to `Major.Minor.0.0` — for the 5.0 line, always `5.0.0.0` (and `4.9.0.0` on the 4.9 line).
 
 Win32 version fields are four `UInt16`s and cannot carry a `-prerelease` or
 `+metadata` suffix, so the full composed string could not go there even if it
 were desirable. Pinning has a second, larger benefit: **CLR assembly binding
-stays fixed across the whole minor line**, so every `4.9.x` patch loads
+stays fixed across the whole minor line**, so every `5.0.x` patch loads
 interchangeably. Consumers never need a binding redirect to take a patch.
 
-Moving `version.txt` to `4.10` moves the binding identity to `4.10.0.0`, which is
-a binding-breaking change for anything compiled against `4.9.0.0`. That is the
+Moving `version.txt` to `5.1` moves the binding identity to `5.1.0.0`, which is
+a binding-breaking change for anything compiled against `5.0.0.0`. That is the
 signal a minor bump is meant to carry.
 
 ---

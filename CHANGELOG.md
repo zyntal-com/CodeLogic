@@ -25,6 +25,10 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 - `Result<T>.Bind`, `Match`, `MapAsync`, `BindAsync`; `Result.Bind`, `Match`; `Ok`;
   `Error.Empty`; value equality for `Result` and `Result<T>`.
+- `Result.ThrowIfFailure()`, the non-generic counterpart of `ValueOrThrow`.
+- `ResultFailedException`, which carries the `Error`. `ValueOrThrow` and `ThrowIfFailure` throw it. It
+  derives from `InvalidOperationException`, so existing `catch` blocks keep working; checks for the exact
+  type (`Assert.Throws<InvalidOperationException>`) need `ThrowsAny` or the new type.
 
 ### Changed
 

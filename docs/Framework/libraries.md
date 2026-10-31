@@ -31,7 +31,7 @@ public interface ILibrary : IDisposable
 
 **Key rule:** Do not read config in `OnConfigureAsync`. Config is loaded *after* this method returns. Read it in `OnInitializeAsync`.
 
-### Live config changes (optional, 4.9.0+)
+### Live config changes (optional)
 
 Implement `IConfigReloadable` to apply config changes while running, instead of on the next restart:
 
@@ -55,8 +55,8 @@ Provided to each library at every lifecycle phase. Scoped to that specific libra
 ```csharp
 public sealed class LibraryContext
 {
-    string LibraryId          { get; }   // "CL.SQLite"
-    string LibraryDirectory   { get; }   // {FrameworkRoot}/Libraries/CL.SQLite/
+    string LibraryId          { get; }   // "CL.Data"
+    string LibraryDirectory   { get; }   // {FrameworkRoot}/Libraries/CL.Data/
     string ConfigDirectory    { get; }   // same as LibraryDirectory by default
     string LocalizationDirectory { get; } // {LibraryDirectory}/localization/
     string LogsDirectory      { get; }   // {LibraryDirectory}/logs/
@@ -80,8 +80,8 @@ Describes a library's identity and requirements:
 ```csharp
 public sealed class LibraryManifest
 {
-    string Id { get; init; }                      // "CL.SQLite" — determines directory name
-    string Name { get; init; }                    // "SQLite Library" — shown in console
+    string Id { get; init; }                      // "CL.Data" — determines directory name
+    string Name { get; init; }                    // "Data Library" — shown in console
     string Version { get; init; }                 // "1.0.0" — checked against dependencies
     string? Description { get; init; }
     string? Author { get; init; }
@@ -95,7 +95,7 @@ public sealed class LibraryManifest
 Library IDs follow the `CL.Name` convention:
 
 ```
-CL.SQLite
+CL.Data
 CL.Mail
 CL.ZWave
 CL.Dashboard
@@ -112,8 +112,8 @@ Declares a dependency on another library:
 ```csharp
 public sealed record LibraryDependency
 {
-    string Id { get; init; }         // "CL.SQLite"
-    string? MinVersion { get; init; } // "1.2.0" or null (any version)
+    string Id { get; init; }         // "CL.Data"
+    string? MinVersion { get; init; } // "5.0.0" or null (any version)
     bool IsOptional { get; init; }   // false = required, true = optional
 
     // Factory methods (preferred over constructors)
@@ -131,7 +131,7 @@ public LibraryManifest Manifest => new()
     Name = "Mail Library",
     Version = "1.0.0",
     Dependencies = [
-        LibraryDependency.Required("CL.SQLite", "1.2.0"),  // must exist, >= 1.2.0
+        LibraryDependency.Required("CL.Data", "5.0.0"),  // must exist, >= 5.0.0
         LibraryDependency.Optional("CL.Template"),          // nice to have
     ]
 };
@@ -144,7 +144,7 @@ public LibraryManifest Manifest => new()
 Alternative to declaring dependencies in the manifest — use attributes on the class:
 
 ```csharp
-[LibraryDependency(Id = "CL.SQLite", MinVersion = "1.2.0")]
+[LibraryDependency(Id = "CL.Data", MinVersion = "5.0.0")]
 [LibraryDependency(Id = "CL.Template", IsOptional = true)]
 public class MailLibrary : ILibrary
 {
@@ -189,9 +189,9 @@ When `EnableDependencyResolution = true` (default), the `LibraryManager` perform
 5. Stops libraries in reverse order (dependencies last)
 
 ```
-CL.SQLite → CL.Mail → CL.Notifications
-Start order:  SQLite, Mail, Notifications
-Stop order:   Notifications, Mail, SQLite
+CL.Data → CL.Mail → CL.Notifications
+Start order:  Data, Mail, Notifications
+Stop order:   Notifications, Mail, Data
 ```
 
 Circular dependencies are detected and throw an `InvalidOperationException`.
@@ -240,7 +240,7 @@ using CodeLogic.Core.Events;
 using System.ComponentModel.DataAnnotations;
 
 // Config model
-public class SqliteConfig : ConfigModelBase
+public class DataLibraryConfig : ConfigModelBase
 {
     [Required]
     public string DatabasePath { get; set; } = "data/mydb.sqlite";
@@ -250,24 +250,24 @@ public class SqliteConfig : ConfigModelBase
 }
 
 // Library implementation
-public class SqliteLibrary : ILibrary
+public class DataLibrary : ILibrary
 {
     public LibraryManifest Manifest => new()
     {
-        Id          = "CL.SQLite",
-        Name        = "SQLite Library",
+        Id          = "CL.Data",
+        Name        = "Data Library",
         Version     = "1.0.0",
-        Description = "Provides SQLite database access"
+        Description = "Provides database access"
     };
 
     private LibraryContext _context = null!;
-    private SqliteConfig _config = null!;
+    private DataLibraryConfig _config = null!;
     private Database? _db;
 
     // Phase 1: Register models (config not yet loaded)
     public Task OnConfigureAsync(LibraryContext context)
     {
-        context.Configuration.Register<SqliteConfig>();
+        context.Configuration.Register<DataLibraryConfig>();
         return Task.CompletedTask;
     }
 
@@ -275,7 +275,7 @@ public class SqliteLibrary : ILibrary
     public Task OnInitializeAsync(LibraryContext context)
     {
         _context = context;
-        _config = context.Configuration.Get<SqliteConfig>();
+        _config = context.Configuration.Get<DataLibraryConfig>();
 
         context.Logger.Info($"Opening database at: {_config.DatabasePath}");
         _db = new Database(_config.DatabasePath, _config.MaxConnections);
@@ -286,9 +286,9 @@ public class SqliteLibrary : ILibrary
     // Phase 3: Start — begin accepting queries
     public Task OnStartAsync(LibraryContext context)
     {
-        context.Logger.Info("SQLite library started");
+        context.Logger.Info("Data library started");
         context.Events.Publish(new ComponentAlertEvent(
-            "CL.SQLite", "started", "Database is ready"));
+            "CL.Data", "started", "Database is ready"));
         return Task.CompletedTask;
     }
 
@@ -325,16 +325,16 @@ public class SqliteLibrary : ILibrary
 
 ```csharp
 // In Program.cs, after InitializeAsync:
-await Libraries.LoadAsync<SqliteLibrary>();
+await Libraries.LoadAsync<DataLibrary>();
 ```
 
 ### Accessing the library from the application
 
 ```csharp
 // In MyApp.OnInitializeAsync:
-var sqlite = Libraries.Get<SqliteLibrary>()
-    ?? throw new InvalidOperationException("SQLite library not loaded");
+var data = Libraries.Get<DataLibrary>()
+    ?? throw new InvalidOperationException("Data library not loaded");
 
 // Or by ID:
-var sqlite = Libraries.Get("CL.SQLite");
+var data = Libraries.Get("CL.Data");
 ```

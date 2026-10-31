@@ -115,7 +115,7 @@ public async Task OnInitializeAsync(ApplicationContext context)
     var config = context.Configuration.Get<MyAppConfig>();
 
     // Libraries are fully running — access them freely
-    var db   = Libraries.Get<CL.SQLite.SQLiteLibrary>();
+    var db   = Libraries.Get<CL.Data.DataLibrary>();
     var mail = Libraries.Get<CL.Mail.MailLibrary>();
 
     // Set up application services using library services
@@ -270,7 +270,7 @@ public sealed class MyApp : IApplication
     public async Task OnInitializeAsync(ApplicationContext context)
     {
         _ctx  = context;
-        var db = Libraries.Get<CL.SQLite.SQLiteLibrary>();
+        var db = Libraries.Get<CL.Data.DataLibrary>();
         _users = new UserService(db, context.Logger);
         await _users.InitializeAsync();
     }

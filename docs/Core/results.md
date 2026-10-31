@@ -134,6 +134,13 @@ var user = FindUser("user-123").ValueOrDefault(User.Guest);
 var user = FindUser("user-123").ValueOrThrow();
 ```
 
+`ValueOrThrow` throws `ResultFailedException`, an `InvalidOperationException` that carries the `Error`:
+
+```csharp
+try { var user = FindUser(id).ValueOrThrow(); }
+catch (ResultFailedException ex) when (ex.Error is NotFoundError) { /* ... */ }
+```
+
 ---
 
 ## Result (non-generic)
@@ -154,6 +161,7 @@ public readonly struct Result
 
     public Result OnSuccess(Action action);
     public Result OnFailure(Action<Error> action);
+    public void ThrowIfFailure();   // throws ResultFailedException on failure
 }
 ```
 
@@ -170,6 +178,9 @@ public Result DeleteUser(string id)
 var result = DeleteUser("user-123");
 if (result.IsFailure)
     return result.Error!;
+
+// Where a failure is a bug (tests, scripts, startup), throw instead:
+DeleteUser("user-123").ThrowIfFailure();
 ```
 
 ---

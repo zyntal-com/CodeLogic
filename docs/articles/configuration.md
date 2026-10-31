@@ -143,18 +143,18 @@ Per-component config files (`config.database.json`, etc.) do not have a developm
 ```csharp
 public Task OnConfigureAsync(ApplicationContext context)
 {
-    var host = CodeLogic.GetRequiredStartupParameter<string>("mysql-host");
+    var host = CodeLogic.GetRequiredStartupParameter<string>("db-host");
 
-    Libraries.OverrideConfig<DatabaseConfiguration>(
-        "CL.MySQL2",
-        "mysql",
-        config => config.Databases["Default"].Host = host);
+    Libraries.OverrideConfig<DataConfig>(
+        "CL.Data",
+        "data",
+        config => config.Connections["Default"].Host = host);
 
     return Task.CompletedTask;
 }
 ```
 
-Set `MYSQL_HOST=db.internal` in the environment, or pass `--mysql-host db.internal` (or `--mysql-host=db.internal`). Command-line values win. The override is applied after the normal JSON is read but before final validation, is visible to the library during `OnInitializeAsync`, and is never written to the JSON file — not even when the section is later saved, updated through an admin UI, or reloaded (the override is re-applied each time). Register it no later than application `OnConfigureAsync`.
+Set `DB_HOST=db.internal` in the environment, or pass `--db-host db.internal` (or `--db-host=db.internal`). Command-line values win. The override is applied after the normal JSON is read but before final validation, is visible to the library during `OnInitializeAsync`, and is never written to the JSON file — not even when the section is later saved, updated through an admin UI, or reloaded (the override is re-applied each time). Register it no later than application `OnConfigureAsync`.
 
 ---
 

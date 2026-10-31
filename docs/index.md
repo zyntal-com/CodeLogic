@@ -2,9 +2,9 @@
 _layout: landing
 ---
 
-# CodeLogic 4
+# CodeLogic 5
 
-CodeLogic 4 is a .NET 11 framework for lifecycle-managed applications with libraries, plugins, configuration, localization, events, and health checks.
+CodeLogic 5 is a .NET 11 framework for lifecycle-managed applications with libraries, plugins, configuration, localization, events, and health checks.
 
 ---
 

@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through installing CodeLogic 4, understanding the boot flow, and writing your first library and application.
+This guide walks you through installing CodeLogic 5, understanding the boot flow, and writing your first library and application.
 
 ---
 

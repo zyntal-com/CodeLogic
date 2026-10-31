@@ -1,4 +1,4 @@
-# CodeLogic 4 Documentation
+# CodeLogic 5 Documentation
 
 CodeLogic is a modular .NET 11 framework for building structured, lifecycle-aware applications. It provides libraries, plugins, configuration, localization, logging, events, and health checks — all wired together through a strict boot sequence.
 

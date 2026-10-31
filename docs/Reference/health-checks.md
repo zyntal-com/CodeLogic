@@ -92,7 +92,7 @@ context.Events.Subscribe<HealthCheckCompletedEvent>(e =>
 var result = await CodeLogic.InitializeAsync(o => o.AppVersion = "1.0.0");
 if (result.ShouldExit) return;
 
-await Libraries.LoadAsync<SqliteLibrary>();
+await Libraries.LoadAsync<DataLibrary>();
 CodeLogic.RegisterApplication(new MyApp());
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();

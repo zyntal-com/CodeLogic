@@ -21,7 +21,7 @@ CodeLogic parses command-line arguments during `InitializeAsync()`. CLI flags ov
 
 ```text
 $ myapp --version
-CodeLogic 4.8.142 | App 1.0.0
+CodeLogic 5.0.29 | App 1.0.0
 ```
 
 This sets `InitializationResult.ShouldExit = true`.
@@ -32,7 +32,7 @@ This sets `InitializationResult.ShouldExit = true`.
 
 ```text
 $ myapp --info
-CodeLogic 4.8.142
+CodeLogic 5.0.29
   App version  : 1.0.0
   Machine      : MY-MACHINE
   Framework    : C:\MyApp\CodeLogic
@@ -53,7 +53,7 @@ This also sets `InitializationResult.ShouldExit = true`.
 var result = await CodeLogic.InitializeAsync(o => o.AppVersion = "1.0.0");
 if (result.ShouldExit) return;
 
-await Libraries.LoadAsync<SqliteLibrary>();
+await Libraries.LoadAsync<DataLibrary>();
 CodeLogic.RegisterApplication(new MyApp());
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
@@ -80,7 +80,7 @@ $ myapp --generate-configs
 You can scope generation to specific libraries by appending library IDs:
 
 ```text
-$ myapp --generate-configs CL.SQLite CL.Mail
+$ myapp --generate-configs CL.Data CL.Mail
 ```
 
 Scoping applies to libraries only. The application config still follows the normal generation rules.
@@ -98,7 +98,7 @@ $ myapp --generate-configs-force
 Scoped force generation is also supported:
 
 ```text
-$ myapp --generate-configs-force CL.SQLite
+$ myapp --generate-configs-force CL.Data
 ```
 
 When scoped, only the listed libraries are force-regenerated.
@@ -120,7 +120,7 @@ Example:
 ```text
 $ myapp --generate-configs --dry-run
 [dry-run] Would generate: CodeLogic\Application\config.json
-[dry-run] Would generate: CodeLogic\Libraries\CL.SQLite\config.json
+[dry-run] Would generate: CodeLogic\Libraries\CL.Data\config.json
 Dry run complete - all config files validated successfully.
 ```
 
