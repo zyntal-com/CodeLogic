@@ -1,6 +1,6 @@
 # Getting Started with CodeLogic 4
 
-CodeLogic is a modular .NET 10 framework for building structured applications with libraries, plugins, configuration, localization, events, and health checks. This guide takes you from zero to a running application.
+CodeLogic is a modular .NET 11 framework for building structured applications with libraries, plugins, configuration, localization, events, and health checks. This guide takes you from zero to a running application.
 
 ---
 
@@ -14,13 +14,13 @@ Add CodeLogic as a project reference:
 </ItemGroup>
 ```
 
-Your project should target .NET 10:
+Your project should target .NET 11:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 </Project>

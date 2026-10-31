@@ -59,26 +59,26 @@ public interface ILogger
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Debug(string message, params object?[] args) => Debug(string.Format(message, args));
+    void Debug(string message, params object?[] args) => Debug(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
 
     /// <summary>
     /// Logs a formatted informational message using <see cref="string.Format(string, object?[])"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Info(string message, params object?[] args) => Info(string.Format(message, args));
+    void Info(string message, params object?[] args) => Info(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
 
     /// <summary>
     /// Logs a formatted warning message using <see cref="string.Format(string, object?[])"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Warning(string message, params object?[] args) => Warning(string.Format(message, args));
+    void Warning(string message, params object?[] args) => Warning(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
 
     /// <summary>
     /// Logs a formatted error message using <see cref="string.Format(string, object?[])"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Error(string message, params object?[] args) => Error(string.Format(message, args));
+    void Error(string message, params object?[] args) => Error(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
 }

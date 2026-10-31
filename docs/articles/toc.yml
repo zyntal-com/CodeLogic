@@ -14,3 +14,5 @@
   href: health-checks.md
 - name: Plugins
   href: plugins.md
+- name: Migrating to 5.0
+  href: migrating-to-5.md

@@ -10,6 +10,12 @@ namespace CodeLogic;
 /// </summary>
 public sealed class HealthReport
 {
+    private static readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     /// <summary>
     /// Overall health flag. True only when every library, plugin, and the application are Healthy.
     /// False if any component is Degraded or Unhealthy.
@@ -29,13 +35,13 @@ public sealed class HealthReport
     /// Health status for each library, keyed by library ID (e.g., "CL.SQLite").
     /// Only includes libraries in the <see cref="LibraryState.Started"/> state.
     /// </summary>
-    public Dictionary<string, HealthStatus> Libraries { get; init; } = new();
+    public Dictionary<string, HealthStatus> Libraries { get; init; } = [];
 
     /// <summary>
     /// Health status for each plugin, keyed by plugin ID.
     /// Only includes plugins in the <see cref="Framework.Application.Plugins.PluginState.Started"/> state.
     /// </summary>
-    public Dictionary<string, HealthStatus> Plugins { get; init; } = new();
+    public Dictionary<string, HealthStatus> Plugins { get; init; } = [];
 
     /// <summary>
     /// Health status from the registered application, or null if no application is registered.
@@ -54,7 +60,7 @@ public sealed class HealthReport
         libraries   = Libraries.ToDictionary(k => k.Key, v => new { status = v.Value.Status.ToString(), v.Value.Message }),
         plugins     = Plugins.ToDictionary(k => k.Key, v => new { status = v.Value.Status.ToString(), v.Value.Message }),
         application = Application == null ? null : new { status = Application.Status.ToString(), Application.Message }
-    }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+    }, _jsonOptions);
 
     /// <summary>
     /// Formats the report as a human-readable console table.
@@ -63,25 +69,25 @@ public sealed class HealthReport
     public string ToConsoleString()
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"Health Report — {CheckedAt:yyyy-MM-dd HH:mm:ss} UTC");
-        sb.AppendLine($"Machine: {MachineName}  App: {AppVersion}");
-        sb.AppendLine($"Overall: {(IsHealthy ? "HEALTHY" : "UNHEALTHY")}");
+        sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Health Report — {CheckedAt:yyyy-MM-dd HH:mm:ss} UTC");
+        sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Machine: {MachineName}  App: {AppVersion}");
+        sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Overall: {(IsHealthy ? "HEALTHY" : "UNHEALTHY")}");
         sb.AppendLine();
 
         if (Libraries.Count > 0)
         {
             sb.AppendLine("Libraries:");
             foreach (var (id, s) in Libraries)
-                sb.AppendLine($"  {s.Status,-10} {id}: {s.Message}");
+                sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"  {s.Status,-10} {id}: {s.Message}");
         }
         if (Plugins.Count > 0)
         {
             sb.AppendLine("Plugins:");
             foreach (var (id, s) in Plugins)
-                sb.AppendLine($"  {s.Status,-10} {id}: {s.Message}");
+                sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"  {s.Status,-10} {id}: {s.Message}");
         }
         if (Application != null)
-            sb.AppendLine($"Application: {Application.Status} — {Application.Message}");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Application: {Application.Status} — {Application.Message}");
 
         return sb.ToString();
     }

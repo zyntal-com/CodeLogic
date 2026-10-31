@@ -8,10 +8,11 @@ namespace CodeLogic;
 /// </summary>
 internal sealed class StartupParameterStore
 {
-    private static readonly HashSet<string> ReservedFlags = new(StringComparer.OrdinalIgnoreCase)
-    {
+    private static readonly HashSet<string> ReservedFlags =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
         "generate-configs", "generate-configs-force", "dry-run", "version", "info", "health"
-    };
+    ];
 
     private readonly IReadOnlyDictionary<string, string> _commandLine;
     private readonly IReadOnlyDictionary<string, string> _environment;
@@ -26,7 +27,7 @@ internal sealed class StartupParameterStore
 
     public static StartupParameterStore Capture()
     {
-        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> environment = [with(StringComparer.OrdinalIgnoreCase)];
         foreach (System.Collections.DictionaryEntry item in Environment.GetEnvironmentVariables())
         {
             if (item.Key is string key && item.Value is string value)
@@ -40,7 +41,7 @@ internal sealed class StartupParameterStore
         IEnumerable<string> args,
         IReadOnlyDictionary<string, string> environment)
     {
-        var commandLine = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> commandLine = [with(StringComparer.OrdinalIgnoreCase)];
         var values = args.ToArray();
 
         for (var i = 0; i < values.Length; i++)

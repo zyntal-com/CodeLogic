@@ -3,8 +3,8 @@ name: Build And Release
 on:
   push:
     branches:
-      - release
-      - prerelease
+      - 'release/**'
+      - 'prerelease/**'
   workflow_dispatch:
 
 permissions:
@@ -17,11 +17,15 @@ concurrency:
 jobs:
   # Publishing to nuget.org cannot be undone - a version can be delisted but never
   # replaced or reused. Nothing is packed until the suite is green.
+  # Creating a release/* or prerelease/* branch (Promote does this the first time) must not publish:
+  # publishing happens through Promote's dispatch or a push of new commits.
   verify:
+    if: github.event_name != 'push' || !github.event.created
     uses: ./.github/workflows/ci-tests.yml
 
   release:
     needs: [verify]
+    if: github.event_name != 'push' || !github.event.created
     runs-on: ubuntu-latest
     # Must match the nuget.org Trusted Publishing policy (workflow release.yml, environment production).
     environment: production
@@ -36,10 +40,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Compose version
         id: version
@@ -53,7 +58,7 @@ jobs:
           # to the repo; the version is composed at pack time via -p:Version.
           $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
           $sha = '${{ github.sha }}'.Substring(0,7)
-          if ('${{ github.ref_name }}' -eq 'prerelease') {
+          if ('${{ github.ref_name }}'.StartsWith('prerelease/')) {
             $version = "$rootVer.${{ github.run_number }}-preview+$sha"
           } else {
             $version = "$rootVer.${{ github.run_number }}+$sha"
@@ -121,7 +126,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
           $runtimeZip = "artifacts/CodeLogic-${{ steps.version.outputs.tag_version }}.zip"
-          Compress-Archive -Path 'src/bin/Release/net10.0/*' -DestinationPath $runtimeZip -Force
+          Compress-Archive -Path 'src/bin/Release/net11.0/*' -DestinationPath $runtimeZip -Force
 
           @"
           ## CodeLogic ${{ steps.version.outputs.version }}
@@ -132,10 +137,12 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
+          # Tag the commit that was built. Without this a new tag lands on the default branch.
+          target_commitish: ${{ github.sha }}
           tag_name: v${{ steps.version.outputs.tag_version }}
           name: CodeLogic ${{ steps.version.outputs.tag_version }}
           body_path: artifacts/release-notes.md
-          prerelease: ${{ github.ref_name == 'prerelease' }}
+          prerelease: ${{ startsWith(github.ref_name, 'prerelease/') }}
           generate_release_notes: true
           files: |
             artifacts/*.nupkg
@@ -143,5 +150,5 @@ jobs:
 
       # NOTE: this workflow no longer writes versions back to the repo.
       # The major.minor line lives in version.txt (hand-controlled); the patch
-      # is the CI run number, composed at pack time. Push main → prerelease for
-      # a preview package, main → release to publish.
+      # is the CI run number, composed at pack time. Run Promote (source main or
+      # support/<N>.x) to publish to prerelease/<N>.x or release/<N>.x.

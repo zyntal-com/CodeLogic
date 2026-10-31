@@ -15,6 +15,12 @@ namespace CodeLogic;
 /// </summary>
 public sealed class CodeLogicRuntime : ICodeLogicRuntime
 {
+    private static readonly JsonSerializerOptions _configJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly EventBus _eventBus = new();
 
@@ -130,6 +136,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 AppDomain.CurrentDomain.ProcessExit += (_, _) =>
                 {
                     _eventBus.Publish(new ShutdownRequestedEvent("ProcessExit"));
+                    // Deliberately blocking: the process terminates as soon as a ProcessExit
+                    // handler returns, so an un-awaited StopAsync would never finish.
                     StopAsync().GetAwaiter().GetResult();
                 };
             }
@@ -390,8 +398,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     /// </summary>
     public async Task<HealthReport> GetHealthAsync()
     {
-        var libraries = _libraryManager != null ? await _libraryManager.GetHealthAsync() : new Dictionary<string, HealthStatus>();
-        var plugins = _pluginManager != null ? await _pluginManager.GetHealthAsync() : new Dictionary<string, HealthStatus>();
+        var libraries = _libraryManager != null ? await _libraryManager.GetHealthAsync() : [];
+        var plugins = _pluginManager != null ? await _pluginManager.GetHealthAsync() : [];
 
         HealthStatus? appHealth = null;
         if (_application != null)
@@ -511,11 +519,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             throw new FileNotFoundException($"Config not found at: {configPath}");
 
         var json = await File.ReadAllTextAsync(configPath);
-        _config = JsonSerializer.Deserialize<CodeLogicConfiguration>(json, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        }) ?? throw new InvalidOperationException($"Failed to deserialize {Path.GetFileName(configPath)}");
+        _config = JsonSerializer.Deserialize<CodeLogicConfiguration>(json, _configJsonOptions) ?? throw new InvalidOperationException($"Failed to deserialize {Path.GetFileName(configPath)}");
     }
 
     private ApplicationContext CreateApplicationContext()

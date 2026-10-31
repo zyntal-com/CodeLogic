@@ -1,12 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <RootNamespace>CodeLogic</RootNamespace>
     <AssemblyName>CodeLogic</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
+    <LangVersion>15</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
     <!--
       Version is COMPOSED at build time, never hardcoded here.
 
@@ -40,7 +41,7 @@
     <InformationalVersion>$(Version)</InformationalVersion>
     <Authors>Zyntal.com</Authors>
     <Copyright>Copyright © 2026 Zyntal.com</Copyright>
-    <Description>Modular .NET 10 framework with lifecycle-managed libraries, applications, and plugins. Zero external NuGet dependencies.</Description>
+    <Description>CodeLogic 5: modular .NET 11 framework with lifecycle-managed libraries, applications, and plugins. Zero external NuGet dependencies.</Description>
     <PackageId>CodeLogic</PackageId>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/zyntal-com/CodeLogic</PackageProjectUrl>

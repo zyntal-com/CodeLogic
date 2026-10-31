@@ -6,13 +6,13 @@ namespace CodeLogic.Core.Events;
 /// </summary>
 public sealed class EventBus : IEventBus
 {
-    private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = new();
-    private readonly object _lock = new();
+    private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = [];
+    private readonly Lock _lock = new();
 
     /// <inheritdoc />
     public void Publish<T>(T @event) where T : IEvent
     {
-        var entries = GetSnapshot(typeof(T));
+        var entries = GetSnapshot(typeof(T), @event);
         foreach (var entry in entries)
         {
             try
@@ -34,7 +34,7 @@ public sealed class EventBus : IEventBus
     /// <inheritdoc />
     public async Task PublishAsync<T>(T @event) where T : IEvent
     {
-        var entries = GetSnapshot(typeof(T));
+        var entries = GetSnapshot(typeof(T), @event);
         foreach (var entry in entries)
         {
             try
@@ -90,20 +90,28 @@ public sealed class EventBus : IEventBus
         {
             if (!_subscriptions.TryGetValue(eventType, out var list))
             {
-                list = new List<SubscriptionEntry>();
+                list = [];
                 _subscriptions[eventType] = list;
             }
             list.Add(entry);
         }
     }
 
-    private List<SubscriptionEntry> GetSnapshot(Type eventType)
+    // Subscribers are keyed by the static event type. Framework events are additionally delivered to
+    // subscribers of the closed FrameworkEvent base, so one handler can switch over all of them.
+    private List<SubscriptionEntry> GetSnapshot(Type eventType, IEvent @event)
     {
         lock (_lock)
         {
-            if (_subscriptions.TryGetValue(eventType, out var list))
-                return list.ToList(); // snapshot — don't hold lock during invocation
-            return [];
+            List<SubscriptionEntry> snapshot = _subscriptions.TryGetValue(eventType, out var list)
+                ? [.. list] // snapshot — don't hold lock during invocation
+                : [];
+
+            if (@event is FrameworkEvent && eventType != typeof(FrameworkEvent)
+                && _subscriptions.TryGetValue(typeof(FrameworkEvent), out var frameworkSubscribers))
+                snapshot.AddRange(frameworkSubscribers);
+
+            return snapshot;
         }
     }
 

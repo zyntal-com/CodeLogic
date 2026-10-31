@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace CodeLogic.Core.Logging;
 
@@ -9,7 +10,7 @@ public sealed class Logger : ILogger
     private readonly string _componentLogsPath;
     private readonly LogLevel _minimumLevel;
     private readonly LoggingOptions _options;
-    private readonly object _lock = new();           // per-instance, not static
+    private readonly Lock _lock = new();           // per-instance, not static
 
     /// <summary>Initializes a new logger for the specified component.</summary>
     public Logger(
@@ -40,7 +41,7 @@ public sealed class Logger : ILogger
 
     private void Log(LogLevel level, string message, Exception? exception = null)
     {
-        var timestamp = DateTime.Now.ToString(_options.TimestampFormat);
+        var timestamp = DateTime.Now.ToString(_options.TimestampFormat, CultureInfo.InvariantCulture);
         var prefix = BuildPrefix(timestamp, level);
         var entry = BuildEntry(prefix, message, exception);
 
@@ -70,7 +71,7 @@ public sealed class Logger : ILogger
 
     private string BuildPrefix(string timestamp, LogLevel level)
     {
-        var levelStr = level.ToString().ToUpper();
+        var levelStr = level.ToString().ToUpperInvariant();
         return _options.IncludeMachineName
             ? $"[{_componentName}][{Environment.MachineName}] {timestamp} [{levelStr}]"
             : $"[{_componentName}] {timestamp} [{levelStr}]";
@@ -90,7 +91,7 @@ public sealed class Logger : ILogger
         if (_options.Mode == LoggingMode.SingleFile)
         {
             // component.log — rolling handled in WriteToFile
-            return Path.Combine(_componentLogsPath, $"{_componentName.ToLower()}.log");
+            return Path.Combine(_componentLogsPath, $"{_componentName.ToLowerInvariant()}.log");
         }
         else
         {
@@ -98,10 +99,10 @@ public sealed class Logger : ILogger
             var now = DateTime.Now;
             var pattern = _options.FileNamePattern;
             var relative = pattern
-                .Replace("{date:yyyy}", now.ToString("yyyy"))
-                .Replace("{date:MM}",   now.ToString("MM"))
-                .Replace("{date:dd}",   now.ToString("dd"))
-                .Replace("{level}",     level.ToString().ToLower());
+                .Replace("{date:yyyy}", now.ToString("yyyy", CultureInfo.InvariantCulture))
+                .Replace("{date:MM}",   now.ToString("MM", CultureInfo.InvariantCulture))
+                .Replace("{date:dd}",   now.ToString("dd", CultureInfo.InvariantCulture))
+                .Replace("{level}",     level.ToString().ToLowerInvariant());
 
             var fileName  = Path.GetFileName(relative);
             var directory = Path.GetDirectoryName(relative) ?? string.Empty;
@@ -114,7 +115,7 @@ public sealed class Logger : ILogger
     private string ResolveCentralizedFilePath()
     {
         var dir = Path.Combine(_options.CentralizedLogsPath!,
-            DateTime.Now.ToString("yyyy"), DateTime.Now.ToString("MM"), DateTime.Now.ToString("dd"));
+            DateTime.Now.ToString("yyyy", CultureInfo.InvariantCulture), DateTime.Now.ToString("MM", CultureInfo.InvariantCulture), DateTime.Now.ToString("dd", CultureInfo.InvariantCulture));
         Directory.CreateDirectory(dir);
         return Path.Combine(dir, "debug_all.log");
     }

@@ -4,6 +4,38 @@ CodeLogic provides `Result<T>` and `Result` as structured return types for opera
 
 ---
 
+## Pattern matching (5.0, C# 15)
+
+Since 5.0, `Result<T>` is a C# 15 **union** of `T` and `Error`, `Result` is a union of `Ok` and `Error`, and `Error` is a **closed** record whose kinds are fixed subtypes. The compiler checks that a `switch` handles every case:
+
+```csharp
+IResult ToHttp(Result<User> result) => result switch
+{
+    User user               => Results.Ok(user),
+    NotFoundError e         => Results.NotFound(e.Message),
+    ValidationError e       => Results.UnprocessableEntity(e.Message),
+    Error e                 => Results.Problem(e.Message),   // every other kind
+    null                    => Results.Problem("empty result"),
+};
+
+int StatusCode(Error error) => error switch   // no default arm needed
+{
+    NotFoundError     => 404,
+    ValidationError   => 422,
+    UnauthorizedError => 401,
+    ConflictError     => 409,
+    TimeoutError      => 504,
+    UnavailableError  => 503,
+    InternalError     => 500,
+};
+```
+
+The `null` arm covers `default(Result<T>)` (never assigned) and a success whose value is `null`. `IsSuccess`, `Value`, `Error`, `Map`, `OnSuccess`, `ValueOrThrow` and the other 4.x members are unchanged, so existing code keeps compiling. New in 5.0: `Bind`, `Match`, `MapAsync`, `BindAsync`, value equality, and `Error.Empty`, which a `default` result reports from `Map`/`OnFailure`/`ToResult`.
+
+See [Migrating to 5.0](../articles/migrating-to-5.md) for the breaking changes.
+
+---
+
 ## Result\<T\>
 
 A discriminated union containing either a success value or an `Error`:
