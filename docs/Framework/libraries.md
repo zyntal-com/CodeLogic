@@ -137,6 +137,11 @@ public LibraryManifest Manifest => new()
 };
 ```
 
+`MinVersion` and the dependency's `Version` are compared as [SemVer 2.0](https://semver.org/spec/v2.0.0.html)
+versions, pre-release labels included: `5.0.0-preview.3` is below `5.0.0` and above `5.0.0-preview.2`, so a
+pre-release build does not satisfy a `5.0.0` minimum. Build metadata (`+sha`) is ignored. When a minimum is set
+and either version cannot be parsed, dependency validation fails instead of skipping the check.
+
 ---
 
 ## LibraryDependencyAttribute

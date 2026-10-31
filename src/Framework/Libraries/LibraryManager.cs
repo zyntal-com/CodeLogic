@@ -10,13 +10,16 @@ namespace CodeLogic.Framework.Libraries;
 
 /// <summary>
 /// Manages the full lifecycle of all registered CL.* libraries.
-/// Thread-safe: lifecycle methods are serialized via SemaphoreSlim.
+/// Thread-safe: lifecycle methods are serialized via SemaphoreSlim. The set of registered libraries is
+/// an immutable snapshot replaced on registration, so readers (accessors, health checks, the assembly
+/// resolver and the config watcher) never block and never see a collection being modified.
 /// </summary>
 public sealed class LibraryManager : IDisposable
 {
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private readonly List<LoadedLibrary> _libraries = [];
-    private readonly Dictionary<string, ILibrary> _librariesById = [];
+    // Copy-on-write: replaced (never mutated) while holding _lock; read without locking.
+    private volatile LoadedLibrary[] _libraries = [];
+    private readonly ConcurrentDictionary<string, ILibrary> _librariesById = new(StringComparer.Ordinal);
     private readonly IEventBus _eventBus;
     private readonly Lock _configOverrideLock = new();
     private readonly List<ConfigOverrideRegistration> _configOverrides = [];
@@ -133,13 +136,13 @@ public sealed class LibraryManager : IDisposable
                 return false;
             }
 
-            _libraries.Add(new LoadedLibrary
+            _libraries = [.. _libraries, new LoadedLibrary
             {
                 Instance     = library,
                 Manifest     = manifest,
                 AssemblyPath = typeof(T).Assembly.Location,
                 IsOptional   = options?.OptionalAtBoot ?? false
-            });
+            }];
             _librariesById[manifest.Id] = library;
 
             var optionalTag = options?.OptionalAtBoot == true ? " (optional)" : "";
@@ -173,10 +176,10 @@ public sealed class LibraryManager : IDisposable
                     if (_librariesById.ContainsKey(manifest.Id))
                         throw new InvalidOperationException($"Duplicate library ID '{manifest.Id}'");
 
-                    _libraries.Add(new LoadedLibrary
+                    _libraries = [.. _libraries, new LoadedLibrary
                     {
                         Instance = library, Manifest = manifest, AssemblyPath = path
-                    });
+                    }];
                     _librariesById[manifest.Id] = library;
                     Console.WriteLine($"  ✓ Discovered: {manifest.Name} v{manifest.Version}");
                 }
@@ -446,15 +449,15 @@ public sealed class LibraryManager : IDisposable
         _librariesById.GetValueOrDefault(id);
 
     /// <summary>
-    /// Returns all registered library instances.
+    /// Returns a snapshot of all registered library instances.
     /// </summary>
     public IEnumerable<ILibrary> GetAllLibraries() =>
-        _libraries.Select(l => l.Instance);
+        [.. _libraries.Select(l => l.Instance)];
 
     /// <summary>
-    /// Returns all loaded library records including state and context.
+    /// Returns a snapshot of all loaded library records including state and context.
     /// </summary>
-    public IEnumerable<LoadedLibrary> GetLoadedLibraries() => _libraries.AsReadOnly();
+    public IEnumerable<LoadedLibrary> GetLoadedLibraries() => Array.AsReadOnly(_libraries);
 
     // ── Config discovery (3.4.1+) ────────────────────────────────────────────
 
@@ -639,7 +642,7 @@ public sealed class LibraryManager : IDisposable
 
     private async Task ReloadChangedConfigFileAsync(string path)
     {
-        foreach (var lib in _libraries.ToList())
+        foreach (var lib in _libraries)
         {
             if (lib.Context?.Configuration is not ConfigurationManager configuration) continue;
             var type = configuration.FindTypeForFile(path);
@@ -894,24 +897,25 @@ public sealed class LibraryManager : IDisposable
     {
         var ordered = EnableDependencyResolution
             ? TopologicalSort()
-            : _libraries.ToList();
+            : [.. _libraries];
         if (reverse) ordered.Reverse();
         return ordered;
     }
 
     private List<LoadedLibrary> TopologicalSort()
     {
+        var libraries = _libraries;
         var sorted   = new List<LoadedLibrary>();
         var visited  = new HashSet<string>();
         var visiting = new HashSet<string>();
 
-        foreach (var lib in _libraries)
-            Visit(lib, sorted, visited, visiting);
+        foreach (var lib in libraries)
+            Visit(libraries, lib, sorted, visited, visiting);
 
         return sorted;
     }
 
-    private void Visit(LoadedLibrary lib, List<LoadedLibrary> sorted,
+    private static void Visit(LoadedLibrary[] libraries, LoadedLibrary lib, List<LoadedLibrary> sorted,
         HashSet<string> visited, HashSet<string> visiting)
     {
         if (visited.Contains(lib.Manifest.Id)) return;
@@ -922,9 +926,9 @@ public sealed class LibraryManager : IDisposable
 
         foreach (var dep in lib.Manifest.Dependencies)
         {
-            var depLib = _libraries.FirstOrDefault(l => l.Manifest.Id == dep.Id);
+            var depLib = libraries.FirstOrDefault(l => l.Manifest.Id == dep.Id);
             if (depLib == null && dep.IsOptional) continue;
-            if (depLib != null) Visit(depLib, sorted, visited, visiting);
+            if (depLib != null) Visit(libraries, depLib, sorted, visited, visiting);
         }
 
         visiting.Remove(lib.Manifest.Id);
@@ -948,11 +952,22 @@ public sealed class LibraryManager : IDisposable
                     continue;
                 }
 
-                if (dep.MinVersion != null &&
-                    SemanticVersion.TryParse(found.Manifest.Version, out var installed) &&
-                    SemanticVersion.TryParse(dep.MinVersion, out var required) &&
-                    installed != null && required != null &&
-                    installed < required)
+                if (dep.MinVersion == null) continue;
+
+                // A version that cannot be compared must not pass silently.
+                if (!SemanticVersion.TryParse(dep.MinVersion, out var required))
+                {
+                    errors.Add($"'{lib.Manifest.Name}' declares an invalid minimum version '{dep.MinVersion}' " +
+                        $"for '{dep.Id}' (expected a semantic version such as 1.2.0 or 1.2.0-preview.1)");
+                    continue;
+                }
+                if (!SemanticVersion.TryParse(found.Manifest.Version, out var installed))
+                {
+                    errors.Add($"'{lib.Manifest.Name}' requires '{dep.Id}' >= {dep.MinVersion}, " +
+                        $"but the loaded version '{found.Manifest.Version}' is not a valid semantic version");
+                    continue;
+                }
+                if (installed < required)
                 {
                     errors.Add($"'{lib.Manifest.Name}' requires '{dep.Id}' >= {dep.MinVersion}, " +
                         $"but {installed} is loaded");
