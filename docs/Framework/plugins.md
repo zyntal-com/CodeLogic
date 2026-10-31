@@ -225,6 +225,7 @@ For testing or when you don't need isolation, implement `IPlugin` directly in th
 ## Concurrency and failures
 
 - Lifecycle operations (load, register, unload, reload, dispose, hot reload) run one at a time; readers work on snapshots.
+- Calling a lifecycle method on the same manager from a plugin lifecycle callback or an `OnPluginError` handler of the operation in progress throws `InvalidOperationException` instead of deadlocking. `OnPluginLoaded`/`OnPluginUnloaded` handlers run after the operation and may call them.
 - Plugin IDs are unique: loading a second plugin with a loaded ID throws before it starts.
 - A failed load disposes the instance (after `OnUnloadAsync` if `OnStartAsync` was entered) and unloads its context. A failing `OnUnloadAsync` is reported but the plugin is still disposed and removed.
 
