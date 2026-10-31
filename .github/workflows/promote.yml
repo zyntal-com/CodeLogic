@@ -8,8 +8,10 @@ name: Promote
 #
 # Pull requests land on the integration branch. This workflow merges an integration branch
 # into <channel>/<major>.x - the major is read from that branch's version.txt - and dispatches
-# the release workflow there. The release/** and prerelease/** branches are protected so only
-# this workflow (GitHub Actions) can write to them.
+# the release workflow there. The release/** and prerelease/** branches are protected by a
+# repository ruleset whose only bypass is the write deploy key held in the PROMOTE_DEPLOY_KEY
+# secret, so this workflow is the only way to publish. (The built-in GITHUB_TOKEN cannot be a
+# ruleset bypass actor.)
 #
 # Publishing is irreversible - a nuget.org version can be delisted but never replaced or
 # reused - so the release workflow re-runs the full suite and pre-flights every package
@@ -34,8 +36,8 @@ on:
         default: prerelease
 
 permissions:
-  contents: write
-  actions: write
+  contents: read   # pushes go over SSH with the deploy key, not GITHUB_TOKEN
+  actions: write   # to dispatch the release workflow on a newly created channel branch
 
 concurrency:
   group: promote-${{ inputs.source }}-${{ inputs.channel }}
@@ -48,10 +50,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Push over SSH with the Promote deploy key: it is the ruleset's only bypass actor.
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ssh-key: ${{ secrets.PROMOTE_DEPLOY_KEY }}
 
       - name: Merge ${{ inputs.source }} into ${{ inputs.channel }}/<major>.x
         id: merge
@@ -86,22 +90,20 @@ jobs:
 
             if git diff --quiet HEAD "origin/$TARGET"; then
               echo "::notice::$TARGET already matches $SOURCE - nothing to publish."
-              echo "changed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            # Pushes made with the deploy key trigger the release workflow on $TARGET.
+            git push origin "$TARGET"
           else
             echo "::notice::$TARGET does not exist yet - creating it from $SOURCE."
             git checkout -b "$TARGET" "origin/$SOURCE"
+            git push origin "$TARGET"
+            # The release workflow deliberately skips branch creation, so start it explicitly.
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 
-          git push origin "$TARGET"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      # A push made with GITHUB_TOKEN does not trigger other workflows - GitHub blocks
-      # that to prevent recursion - and creating a branch is skipped by the release
-      # workflow on purpose. The release workflow is therefore dispatched explicitly.
-      - name: Trigger the release workflow
-        if: steps.merge.outputs.changed == 'true'
+      - name: Start the release workflow on a newly created channel branch
+        if: steps.merge.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run release.yml --ref "${{ steps.merge.outputs.target }}"

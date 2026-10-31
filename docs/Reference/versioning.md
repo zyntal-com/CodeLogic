@@ -81,10 +81,16 @@ CodeLogic.Libs) use the same layout:
 | Branch | Who writes to it | What happens |
 |--------|------------------|--------------|
 | `main`, `support/4.x` | Pull requests only. Required checks (the full suite, including the database jobs in CodeLogic.Libs) must pass. | Nothing is published. |
-| `prerelease/<N>.x` | The **Promote** workflow only (protected). | Publishes `<major.minor>.<run>-preview+<sha>`, tagged as a GitHub pre-release. |
-| `release/<N>.x` | The **Promote** workflow only (protected). | Publishes `<major.minor>.<run>+<sha>`, tagged as a full GitHub release. |
+| `prerelease/<N>.x` | The **Promote** workflow only. | Publishes `<major.minor>.<run>-preview+<sha>`, tagged as a GitHub pre-release. |
+| `release/<N>.x` | The **Promote** workflow only. | Publishes `<major.minor>.<run>+<sha>`, tagged as a full GitHub release. |
 
 Nothing is written back to the repository, and nothing promotes automatically.
+
+The `release/**` and `prerelease/**` branches are protected by a repository ruleset (no creation, update,
+deletion or force-push). Its only bypass is a write deploy key whose private half is the
+`PROMOTE_DEPLOY_KEY` Actions secret, used by Promote. Not even repository admins can push there
+directly; in an emergency an admin can switch the ruleset off. `main` and `support/**` require a pull
+request with the full suite green.
 
 ### Shipping a change
 
