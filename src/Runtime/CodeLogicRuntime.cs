@@ -376,6 +376,14 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             if (_application != null)
                 try { await _application.OnStopAsync(); } catch { }
 
+            // The registered plugin manager belongs to the runtime from SetPluginManager on:
+            // reset unloads its plugins, stops its watcher and forgets it.
+            if (_pluginManager != null)
+            {
+                try { await _pluginManager.DisposeAsync(); } catch { }
+                _pluginManager = null;
+            }
+
             if (_libraryManager != null)
             {
                 try { await _libraryManager.StopAllAsync(); } catch { }
@@ -434,7 +442,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     public IEventBus GetEventBus() => _eventBus;
 
     /// <summary>
-    /// Registers the plugin manager with the runtime.
+    /// Registers the plugin manager with the runtime. <see cref="StopAsync"/> unloads its plugins and
+    /// <see cref="ResetAsync"/> disposes it and clears the registration.
     /// </summary>
     public void SetPluginManager(PluginManager manager)
     {

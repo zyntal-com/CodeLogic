@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Events;
 using CodeLogic.Core.Localization;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Utilities;
 using CodeLogic.Framework.Libraries;
 
 namespace CodeLogic.Framework.Application.Plugins;
@@ -10,6 +12,18 @@ namespace CodeLogic.Framework.Application.Plugins;
 /// <summary>
 /// Manages the full lifecycle of dynamically loaded plugins.
 /// </summary>
+/// <remarks>
+/// <list type="bullet">
+/// <item>Lifecycle operations (load, register, unload, reload, dispose and hot reload) are serialized:
+/// one runs at a time, so they never overlap for the same or different plugins.</item>
+/// <item>Readers (<see cref="GetPlugin{T}"/>, <see cref="GetAllPlugins"/>, <see cref="GetLoadedPlugins"/>,
+/// <see cref="GetHealthAsync"/>) never block and work on a snapshot.</item>
+/// <item>Plugin IDs are unique. Loading a plugin whose ID is already loaded fails without starting it;
+/// use <see cref="ReloadPluginAsync"/> or unload the running one first.</item>
+/// <item>Do not call lifecycle methods from inside a plugin's own lifecycle callbacks; that is
+/// rejected with <see cref="InvalidOperationException"/> instead of deadlocking.</item>
+/// </list>
+/// </remarks>
 public sealed class PluginManager : IAsyncDisposable
 {
     private readonly IEventBus _eventBus;
@@ -17,10 +31,18 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly LoggingOptions _loggingOptions;
     private readonly string _defaultCulture;
     private readonly IReadOnlyList<string> _supportedCultures;
-    private readonly Dictionary<string, LoadedPlugin> _plugins = [];
-    private readonly Dictionary<string, DateTime> _reloadDebounce = [];
+    private readonly ConcurrentDictionary<string, LoadedPlugin> _plugins = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _reloadDebounce = new(PathComparison.Comparer);
     private readonly Lock _reloadLock = new();
+    private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private FileSystemWatcher? _watcher;
+    private volatile bool _disposed;
+
+    // Identifies the lifecycle operation that currently holds _lifecycleLock. A plugin callback that
+    // calls back into the manager runs in the same async flow, carries the same token, and would
+    // otherwise wait for itself forever.
+    private static readonly AsyncLocal<object?> _flowToken = new();
+    private object? _activeToken;
 
     /// <summary>Raised when a plugin is successfully loaded.</summary>
     public event Action<string>? OnPluginLoaded;
@@ -69,72 +91,41 @@ public sealed class PluginManager : IAsyncDisposable
     // ── Load ─────────────────────────────────────────────────────────────────
 
     /// <summary>Loads and starts a single plugin from the specified assembly path.</summary>
+    /// <exception cref="FileNotFoundException">The assembly does not exist.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The assembly has no <see cref="IPlugin"/>, a plugin with the same ID is already loaded, or the
+    /// call was made from inside a plugin lifecycle callback.
+    /// </exception>
+    /// <remarks>
+    /// When any phase fails, the plugin is cleaned up before the exception is rethrown: a plugin whose
+    /// <see cref="IPlugin.OnStartAsync"/> was entered gets <see cref="IPlugin.OnUnloadAsync"/>, every
+    /// created instance is disposed, and its load context is unloaded.
+    /// </remarks>
     public async Task LoadPluginAsync(string pluginPath)
     {
+        ArgumentException.ThrowIfNullOrEmpty(pluginPath);
         if (!File.Exists(pluginPath))
             throw new FileNotFoundException($"Plugin not found: {pluginPath}");
 
+        string? loadedId;
+        await EnterLifecycleAsync().ConfigureAwait(false);
         try
         {
-            var loadCtx    = new PluginLoadContext(pluginPath);
-            var assembly   = loadCtx.LoadFromAssemblyPath(pluginPath);
-            var pluginType = FindPluginType(assembly)
-                ?? throw new InvalidOperationException($"No IPlugin in {Path.GetFileName(pluginPath)}");
-
-            var plugin   = (IPlugin)Activator.CreateInstance(pluginType)!;
-            var manifest = plugin.Manifest;
-
-            var ctx = CreateContext(manifest.Id, pluginPath);
-
-            // Full 4-phase lifecycle
-            await plugin.OnConfigureAsync(ctx);
-            await ctx.Configuration.GenerateAllDefaultsAsync();
-            await ctx.Configuration.LoadAllAsync();
-            await ctx.Localization.GenerateAllTemplatesAsync(_supportedCultures);
-            await ctx.Localization.LoadAllAsync(_supportedCultures);
-
-            await plugin.OnInitializeAsync(ctx);
-            await plugin.OnStartAsync(ctx);
-
-            var loaded = new LoadedPlugin
-            {
-                Instance      = plugin,
-                Manifest      = manifest,
-                AssemblyPath  = pluginPath,
-                LoadContext   = loadCtx,
-                WeakReference = new WeakReference(loadCtx),
-                Context       = ctx,
-                State         = PluginState.Started
-            };
-
-            _plugins[manifest.Id] = loaded;
-
-            _eventBus.Publish(new PluginLoadedEvent(manifest.Id, manifest.Name));
-            OnPluginLoaded?.Invoke(manifest.Id);
-
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"  + Plugin loaded: {manifest.Name} v{manifest.Version}");
-            Console.ResetColor();
+            loadedId = await LoadCoreAsync(pluginPath).ConfigureAwait(false);
         }
-        catch (Exception ex)
-        {
-            _eventBus.Publish(new PluginFailedEvent(Path.GetFileName(pluginPath), pluginPath, ex));
-            OnPluginError?.Invoke(pluginPath, ex);
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"  x Plugin load failed {Path.GetFileName(pluginPath)}: {ex.Message}");
-            Console.ResetColor();
-            throw;
-        }
+        finally { ExitLifecycle(); }
+
+        NotifyLoaded(loadedId);
     }
 
     /// <summary>Discovers and loads all plugins from the plugins directory.</summary>
     public async Task LoadAllAsync()
     {
-        var paths = await DiscoverAsync();
+        var paths = await DiscoverAsync().ConfigureAwait(false);
         foreach (var path in paths)
         {
-            try { await LoadPluginAsync(path); }
-            catch { /* already logged and evented */ }
+            try { await LoadPluginAsync(path).ConfigureAwait(false); }
+            catch { /* already reported through PluginFailedEvent / OnPluginError */ }
         }
     }
 
@@ -146,104 +137,108 @@ public sealed class PluginManager : IAsyncDisposable
     /// Use this when hosting a plugin in the same process/assembly (e.g. demos, tests) rather
     /// than loading it from a separate DLL via <see cref="LoadPluginAsync"/>. The caller is
     /// responsible for running the full 4-phase lifecycle before calling this method.
+    /// A plugin whose ID is already registered is ignored.
     /// </para>
     /// </summary>
     /// <param name="plugin">The already-started plugin instance to register.</param>
     /// <param name="context">The <see cref="PluginContext"/> the plugin was started with.</param>
-    public Task RegisterInProcessPluginAsync(IPlugin plugin, PluginContext context)
+    public async Task RegisterInProcessPluginAsync(IPlugin plugin, PluginContext context)
     {
+        ArgumentNullException.ThrowIfNull(plugin);
+        ArgumentNullException.ThrowIfNull(context);
         var manifest = plugin.Manifest;
 
-        if (_plugins.ContainsKey(manifest.Id))
+        await EnterLifecycleAsync().ConfigureAwait(false);
+        try
         {
-            Console.WriteLine($"  ! Plugin '{manifest.Name}' already registered");
-            return Task.CompletedTask;
+            if (_plugins.ContainsKey(manifest.Id))
+            {
+                Console.WriteLine($"  ! Plugin '{manifest.Name}' already registered");
+                return;
+            }
+
+            // In-process plugins don't have their own AssemblyLoadContext — use a no-op sentinel.
+            var noOpLoadCtx = new PluginLoadContext(typeof(PluginManager).Assembly.Location);
+
+            _plugins[manifest.Id] = new LoadedPlugin
+            {
+                Instance      = plugin,
+                Manifest      = manifest,
+                AssemblyPath  = typeof(PluginManager).Assembly.Location,
+                LoadContext   = noOpLoadCtx,
+                WeakReference = new WeakReference(noOpLoadCtx),
+                Context       = context,
+                State         = PluginState.Started
+            };
         }
-
-        // In-process plugins don't have an AssemblyLoadContext — use a no-op sentinel.
-        var noOpLoadCtx = new PluginLoadContext(typeof(PluginManager).Assembly.Location);
-
-        _plugins[manifest.Id] = new LoadedPlugin
-        {
-            Instance      = plugin,
-            Manifest      = manifest,
-            AssemblyPath  = typeof(PluginManager).Assembly.Location,
-            LoadContext   = noOpLoadCtx,
-            WeakReference = new WeakReference(noOpLoadCtx),
-            Context       = context,
-            State         = PluginState.Started
-        };
-
-        _eventBus.Publish(new PluginLoadedEvent(manifest.Id, manifest.Name));
-        OnPluginLoaded?.Invoke(manifest.Id);
+        finally { ExitLifecycle(); }
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"  + Plugin registered (in-process): {manifest.Name} v{manifest.Version}");
         Console.ResetColor();
-
-        return Task.CompletedTask;
+        NotifyLoaded(manifest.Id);
     }
 
     // ── Unload ───────────────────────────────────────────────────────────────
 
     /// <summary>Unloads a plugin by its manifest ID and releases its assembly.</summary>
+    /// <remarks>
+    /// The plugin is always removed, disposed and its load context unloaded, even when
+    /// <see cref="IPlugin.OnUnloadAsync"/> throws. Such a failure is reported through
+    /// <see cref="PluginFailedEvent"/> and <see cref="OnPluginError"/>; it is not rethrown.
+    /// </remarks>
     public async Task UnloadPluginAsync(string pluginId)
     {
-        if (!_plugins.TryGetValue(pluginId, out var loaded))
-        {
-            Console.WriteLine($"  ! Plugin '{pluginId}' not loaded");
-            return;
-        }
-
+        LoadedPlugin? unloaded;
+        await EnterLifecycleAsync().ConfigureAwait(false);
         try
         {
-            await loaded.Instance.OnUnloadAsync();
-            loaded.Instance.Dispose();
-            loaded.LoadContext.Unload();
-            loaded.State = PluginState.Stopped;
-            _plugins.Remove(pluginId);
-
-            // Allow GC to collect the unloaded assembly
-            for (int i = 0; i < 10 && (loaded.WeakReference?.IsAlive ?? false); i++)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                await Task.Delay(10);
-            }
-
-            _eventBus.Publish(new PluginUnloadedEvent(pluginId, loaded.Manifest.Name));
-            OnPluginUnloaded?.Invoke(pluginId);
-            Console.WriteLine($"  + Plugin unloaded: {loaded.Manifest.Name}");
+            unloaded = await UnloadCoreAsync(pluginId).ConfigureAwait(false);
         }
-        catch (Exception ex)
-        {
-            loaded.State            = PluginState.Failed;
-            loaded.FailureException = ex;
-            _eventBus.Publish(new PluginFailedEvent(pluginId, loaded.Manifest.Name, ex));
-            OnPluginError?.Invoke(pluginId, ex);
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"  x Plugin unload error '{pluginId}': {ex.Message}");
-            Console.ResetColor();
-        }
+        finally { ExitLifecycle(); }
+
+        NotifyUnloaded(unloaded);
     }
 
     /// <summary>Unloads all currently loaded plugins.</summary>
     public async Task UnloadAllAsync()
     {
-        foreach (var id in _plugins.Keys.ToList())
-            await UnloadPluginAsync(id);
+        List<LoadedPlugin> unloaded;
+        await EnterLifecycleAsync().ConfigureAwait(false);
+        try
+        {
+            unloaded = await UnloadAllCoreAsync().ConfigureAwait(false);
+        }
+        finally { ExitLifecycle(); }
+
+        foreach (var plugin in unloaded)
+            NotifyUnloaded(plugin);
     }
 
     /// <summary>Unloads and reloads a plugin from disk.</summary>
+    /// <exception cref="InvalidOperationException">The plugin is not loaded.</exception>
     public async Task ReloadPluginAsync(string pluginId)
     {
-        if (!_plugins.TryGetValue(pluginId, out var loaded))
-            throw new InvalidOperationException($"Plugin '{pluginId}' not loaded");
+        LoadedPlugin? unloaded = null;
+        string? loadedId;
+        await EnterLifecycleAsync().ConfigureAwait(false);
+        try
+        {
+            if (!_plugins.TryGetValue(pluginId, out var loaded))
+                throw new InvalidOperationException($"Plugin '{pluginId}' not loaded");
 
-        var path = loaded.AssemblyPath;
-        await UnloadPluginAsync(pluginId);
-        await Task.Delay(200); // brief pause for file system
-        await LoadPluginAsync(path);
+            var path = loaded.AssemblyPath;
+            unloaded = await UnloadCoreAsync(pluginId).ConfigureAwait(false);
+            await Task.Delay(200).ConfigureAwait(false); // brief pause for file system
+            loadedId = await LoadCoreAsync(path).ConfigureAwait(false);
+        }
+        finally
+        {
+            ExitLifecycle();
+            NotifyUnloaded(unloaded);
+        }
+
+        NotifyLoaded(loadedId);
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────
@@ -252,22 +247,244 @@ public sealed class PluginManager : IAsyncDisposable
     public T? GetPlugin<T>(string pluginId) where T : class, IPlugin =>
         _plugins.TryGetValue(pluginId, out var p) ? p.Instance as T : null;
 
-    /// <summary>Returns all loaded plugin instances.</summary>
-    public IEnumerable<IPlugin> GetAllPlugins() => _plugins.Values.Select(p => p.Instance);
-    /// <summary>Returns all loaded plugin records including state and metadata.</summary>
-    public IEnumerable<LoadedPlugin> GetLoadedPlugins() => _plugins.Values;
+    /// <summary>Returns a snapshot of all loaded plugin instances.</summary>
+    public IEnumerable<IPlugin> GetAllPlugins() => [.. _plugins.Values.Select(p => p.Instance)];
+    /// <summary>Returns a snapshot of all loaded plugin records including state and metadata.</summary>
+    public IEnumerable<LoadedPlugin> GetLoadedPlugins() => [.. _plugins.Values];
 
     /// <summary>Runs health checks on all started plugins and returns their status.</summary>
     public async Task<Dictionary<string, HealthStatus>> GetHealthAsync()
     {
         var results = new Dictionary<string, HealthStatus>();
-        foreach (var (id, loaded) in _plugins)
+        foreach (var (id, loaded) in _plugins.ToArray())
         {
             if (loaded.State != PluginState.Started) continue;
-            try { results[id] = await loaded.Instance.HealthCheckAsync(); }
+            try { results[id] = await loaded.Instance.HealthCheckAsync().ConfigureAwait(false); }
             catch (Exception ex) { results[id] = HealthStatus.FromException(ex); }
         }
         return results;
+    }
+
+    // ── Lifecycle core (caller holds _lifecycleLock) ─────────────────────────
+
+    private async Task<string?> LoadCoreAsync(string pluginPath)
+    {
+        PluginLoadContext? loadCtx = null;
+        IPlugin? plugin = null;
+        var startEntered = false;
+        string? pluginId = null;
+
+        try
+        {
+            loadCtx = new PluginLoadContext(pluginPath, _options.SharedAssemblies);
+            var assembly   = loadCtx.LoadFromAssemblyPath(Path.GetFullPath(pluginPath));
+            var pluginType = FindPluginType(assembly)
+                ?? throw new InvalidOperationException($"No IPlugin in {Path.GetFileName(pluginPath)}");
+
+            plugin = (IPlugin)Activator.CreateInstance(pluginType)!;
+            var manifest = plugin.Manifest;
+            pluginId = manifest.Id;
+
+            // Reject before anything is started: the running instance stays untouched.
+            if (_plugins.TryGetValue(manifest.Id, out var existing))
+                throw new InvalidOperationException(
+                    $"Plugin '{manifest.Id}' is already loaded from '{existing.AssemblyPath}'. " +
+                    "Unload it first or use ReloadPluginAsync.");
+
+            var ctx = CreateContext(manifest.Id, pluginPath);
+
+            // Full 4-phase lifecycle
+            await plugin.OnConfigureAsync(ctx).ConfigureAwait(false);
+            await ctx.Configuration.GenerateAllDefaultsAsync().ConfigureAwait(false);
+            await ctx.Configuration.LoadAllAsync().ConfigureAwait(false);
+            await ctx.Localization.GenerateAllTemplatesAsync(_supportedCultures).ConfigureAwait(false);
+            await ctx.Localization.LoadAllAsync(_supportedCultures).ConfigureAwait(false);
+
+            await plugin.OnInitializeAsync(ctx).ConfigureAwait(false);
+            startEntered = true;
+            await plugin.OnStartAsync(ctx).ConfigureAwait(false);
+
+            _plugins[manifest.Id] = new LoadedPlugin
+            {
+                Instance      = plugin,
+                Manifest      = manifest,
+                AssemblyPath  = pluginPath,
+                LoadContext   = loadCtx,
+                WeakReference = new WeakReference(loadCtx),
+                Context       = ctx,
+                State         = PluginState.Started
+            };
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"  + Plugin loaded: {manifest.Name} v{manifest.Version}");
+            Console.ResetColor();
+            return manifest.Id;
+        }
+        catch (Exception ex)
+        {
+            await CleanupFailedLoadAsync(plugin, loadCtx, startEntered, pluginId ?? pluginPath).ConfigureAwait(false);
+
+            _eventBus.Publish(new PluginFailedEvent(pluginId ?? Path.GetFileName(pluginPath), pluginPath, ex));
+            RaiseError(pluginPath, ex);
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  x Plugin load failed {Path.GetFileName(pluginPath)}: {ex.Message}");
+            Console.ResetColor();
+            throw;
+        }
+    }
+
+    private static async Task CleanupFailedLoadAsync(IPlugin? plugin, PluginLoadContext? loadCtx, bool startEntered, string label)
+    {
+        if (plugin is not null)
+        {
+            // OnStartAsync may have subscribed to events or started work before it failed.
+            if (startEntered)
+            {
+                try { await plugin.OnUnloadAsync().ConfigureAwait(false); }
+                catch (Exception ex) { ReportCleanupError(label, "OnUnloadAsync", ex); }
+            }
+
+            try { plugin.Dispose(); }
+            catch (Exception ex) { ReportCleanupError(label, "Dispose", ex); }
+        }
+
+        try { loadCtx?.Unload(); }
+        catch (Exception ex) { ReportCleanupError(label, "load context unload", ex); }
+    }
+
+    private async Task<List<LoadedPlugin>> UnloadAllCoreAsync()
+    {
+        List<LoadedPlugin> unloaded = [];
+        foreach (var id in _plugins.Keys.ToList())
+            if (await UnloadCoreAsync(id).ConfigureAwait(false) is { } plugin)
+                unloaded.Add(plugin);
+        return unloaded;
+    }
+
+    private async Task<LoadedPlugin?> UnloadCoreAsync(string pluginId)
+    {
+        if (!_plugins.TryRemove(pluginId, out var loaded))
+        {
+            Console.WriteLine($"  ! Plugin '{pluginId}' not loaded");
+            return null;
+        }
+
+        Exception? failure = null;
+        try { await loaded.Instance.OnUnloadAsync().ConfigureAwait(false); }
+        catch (Exception ex) { failure = ex; }
+
+        // Cleanup runs whatever the unload hook did.
+        try { loaded.Instance.Dispose(); }
+        catch (Exception ex) { failure = failure is null ? ex : new AggregateException(failure, ex); }
+
+        try { loaded.LoadContext.Unload(); }
+        catch (Exception ex) { failure = failure is null ? ex : new AggregateException(failure, ex); }
+
+        if (failure is not null)
+        {
+            loaded.State            = PluginState.Failed;
+            loaded.FailureException = failure;
+            _eventBus.Publish(new PluginFailedEvent(pluginId, loaded.Manifest.Name, failure));
+            RaiseError(pluginId, failure);
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  x Plugin unload error '{pluginId}': {failure.Message}");
+            Console.ResetColor();
+        }
+        else
+        {
+            loaded.State = PluginState.Stopped;
+        }
+
+        // Allow GC to collect the unloaded assembly
+        for (int i = 0; i < 10 && (loaded.WeakReference?.IsAlive ?? false); i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+
+        Console.WriteLine($"  + Plugin unloaded: {loaded.Manifest.Name}");
+        return loaded;
+    }
+
+    // ── Lifecycle serialization ──────────────────────────────────────────────
+
+    private async Task EnterLifecycleAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var flow = _flowToken.Value;
+        if (flow is not null && ReferenceEquals(flow, Volatile.Read(ref _activeToken)))
+            throw new InvalidOperationException(
+                "PluginManager lifecycle methods cannot be called from inside a plugin lifecycle callback.");
+
+        await _lifecycleLock.WaitAsync().ConfigureAwait(false);
+        if (_disposed)
+        {
+            _lifecycleLock.Release();
+            throw new ObjectDisposedException(nameof(PluginManager));
+        }
+
+        var token = new object();
+        Volatile.Write(ref _activeToken, token);
+        _flowToken.Value = token;
+    }
+
+    private void ExitLifecycle()
+    {
+        Volatile.Write(ref _activeToken, null);
+        _flowToken.Value = null;
+        _lifecycleLock.Release();
+    }
+
+    // ── Notifications (never treated as plugin failures) ─────────────────────
+
+    private void NotifyLoaded(string? pluginId)
+    {
+        if (pluginId is null) return;
+        if (_plugins.TryGetValue(pluginId, out var loaded))
+            _eventBus.Publish(new PluginLoadedEvent(pluginId, loaded.Manifest.Name));
+        InvokeHandler(OnPluginLoaded, pluginId, nameof(OnPluginLoaded));
+    }
+
+    private void NotifyUnloaded(LoadedPlugin? plugin)
+    {
+        if (plugin is null) return;
+        _eventBus.Publish(new PluginUnloadedEvent(plugin.Manifest.Id, plugin.Manifest.Name));
+        InvokeHandler(OnPluginUnloaded, plugin.Manifest.Id, nameof(OnPluginUnloaded));
+    }
+
+    private static void InvokeHandler(Action<string>? handlers, string pluginId, string name)
+    {
+        if (handlers is null) return;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action<string>>())
+        {
+            try { handler(pluginId); }
+            catch (Exception ex)
+            {
+                try { Console.Error.WriteLine($"[PluginManager] {name} handler failed for '{pluginId}': {ex.Message}"); }
+                catch { /* ignore */ }
+            }
+        }
+    }
+
+    private void RaiseError(string key, Exception error)
+    {
+        if (OnPluginError is not { } handlers) return;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action<string, Exception>>())
+        {
+            try { handler(key, error); }
+            catch (Exception ex)
+            {
+                try { Console.Error.WriteLine($"[PluginManager] OnPluginError handler failed for '{key}': {ex.Message}"); }
+                catch { /* ignore */ }
+            }
+        }
+    }
+
+    private static void ReportCleanupError(string label, string step, Exception ex)
+    {
+        try { Console.Error.WriteLine($"[PluginManager] Cleanup of '{label}' failed in {step}: {ex.Message}"); }
+        catch { /* ignore */ }
     }
 
     // ── File watcher (hot reload) ─────────────────────────────────────────────
@@ -287,17 +504,18 @@ public sealed class PluginManager : IAsyncDisposable
 
     private async Task SafeOnFileChangedAsync(string filePath)
     {
-        try { await OnFileChangedAsync(filePath); }
+        try { await OnFileChangedAsync(filePath).ConfigureAwait(false); }
+        catch (ObjectDisposedException) { /* manager disposed while the change was pending */ }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[PluginManager] File watcher error: {ex.Message}");
-            OnPluginError?.Invoke(filePath, ex);
+            RaiseError(filePath, ex);
         }
     }
 
     private async Task OnFileChangedAsync(string filePath)
     {
-        if (!_options.EnableHotReload) return;
+        if (!_options.EnableHotReload || _disposed) return;
         if (!filePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) return;
 
         var pluginDir = Path.GetDirectoryName(filePath);
@@ -312,13 +530,16 @@ public sealed class PluginManager : IAsyncDisposable
             _reloadDebounce[filePath] = now;
         }
 
-        await Task.Delay(250); // wait for file write to complete
+        await Task.Delay(250).ConfigureAwait(false); // wait for file write to complete
 
-        var plugin = _plugins.Values.FirstOrDefault(p => p.AssemblyPath == filePath);
+        var fullPath = Path.GetFullPath(filePath);
+        var plugin = _plugins.Values.FirstOrDefault(p =>
+            PathComparison.Comparer.Equals(Path.GetFullPath(p.AssemblyPath), fullPath));
         if (plugin == null) return;
 
         Console.WriteLine($"  ~ Hot-reload: {Path.GetFileName(filePath)}");
-        try { await ReloadPluginAsync(plugin.Manifest.Id); }
+        try { await ReloadPluginAsync(plugin.Manifest.Id).ConfigureAwait(false); }
+        catch (ObjectDisposedException) { /* shutting down */ }
         catch (Exception ex)
         {
             Console.ForegroundColor = ConsoleColor.Red;
@@ -331,7 +552,7 @@ public sealed class PluginManager : IAsyncDisposable
 
     private PluginContext CreateContext(string pluginId, string pluginPath)
     {
-        var pluginDir = Path.GetDirectoryName(pluginPath)!;
+        var pluginDir = Path.GetDirectoryName(Path.GetFullPath(pluginPath))!;
         var logsDir   = Path.Combine(pluginDir, "logs");
         var dataDir   = Path.Combine(pluginDir, "data");
         var locDir    = Path.Combine(pluginDir, "localization");
@@ -363,10 +584,24 @@ public sealed class PluginManager : IAsyncDisposable
 
     // ── Disposal ─────────────────────────────────────────────────────────────
 
-    /// <inheritdoc />
+    /// <summary>Stops watching for changes and unloads every plugin. Safe to call more than once.</summary>
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
         _watcher?.Dispose();
-        await UnloadAllAsync();
+        _watcher = null;
+
+        List<LoadedPlugin> unloaded;
+        try { await EnterLifecycleAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { return; } // a concurrent DisposeAsync finished first
+        try
+        {
+            unloaded = await UnloadAllCoreAsync().ConfigureAwait(false);
+            _disposed = true;
+        }
+        finally { ExitLifecycle(); }
+
+        foreach (var plugin in unloaded)
+            NotifyUnloaded(plugin);
     }
 }

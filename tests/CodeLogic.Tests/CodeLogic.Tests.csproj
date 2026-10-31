@@ -16,5 +16,16 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/CodeLogic.csproj" />
+    <!-- Built first, never referenced: PluginManagerTests load copies of its output folder as a real plugin. -->
+    <ProjectReference Include="../CodeLogic.Tests.PluginFixture/CodeLogic.Tests.PluginFixture.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
+  <Target Name="CopyPluginFixture" AfterTargets="Build">
+    <ItemGroup>
+      <_PluginFixtureFiles Include="$(MSBuildThisFileDirectory)../CodeLogic.Tests.PluginFixture/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginFixtureFiles)"
+          DestinationFiles="@(_PluginFixtureFiles->'$(OutDir)plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
