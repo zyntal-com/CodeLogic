@@ -1,9 +1,15 @@
-name: Promote main
+name: Promote
 
-# Manual publishing. main is the working branch and never publishes by itself
-# (docs/versioning.md). Run this workflow from the Actions tab to merge main into
-# prerelease (preview packages) or release (stable packages); the push starts the
-# release workflow for that branch. Pushing to prerelease or release by hand does the same.
+# Manual publishing (docs/versioning.md). Each major version is a release line:
+#
+#   line   integration branch   preview channel     stable channel
+#   5.x    main                 prerelease/5.x      release/5.x
+#   4.x    support/4.x          prerelease/4.x      release/4.x
+#
+# Pull requests land on the integration branch. This workflow merges an integration branch
+# into <channel>/<major>.x - the major is read from that branch's version.txt - and dispatches
+# the release workflow there. The release/** and prerelease/** branches are protected so only
+# this workflow (GitHub Actions) can write to them.
 #
 # Publishing is irreversible - a nuget.org version can be delisted but never replaced or
 # reused - so the release workflow re-runs the full suite and pre-flights every package
@@ -12,8 +18,15 @@ name: Promote main
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Branch to promote main into'
+      source:
+        description: 'Integration branch of the line to publish'
+        type: choice
+        options:
+          - main
+          - support/4.x
+        default: main
+      channel:
+        description: 'prerelease = preview packages, release = stable packages'
         type: choice
         options:
           - prerelease
@@ -25,12 +38,12 @@ permissions:
   actions: write
 
 concurrency:
-  group: promote-${{ inputs.target }}
+  group: promote-${{ inputs.source }}-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
   promote:
-    # Manual runs from main only.
+    # Always run the definition on main, whichever line is promoted.
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
 
@@ -40,34 +53,55 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge main into ${{ inputs.target }}
+      - name: Merge ${{ inputs.source }} into ${{ inputs.channel }}/<major>.x
         id: merge
         env:
-          TARGET: ${{ inputs.target }}
+          SOURCE: ${{ inputs.source }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git checkout "$TARGET"
-          git merge --no-ff origin/main -m "Merge main into $TARGET: manual promotion
+          line=$(git show "origin/$SOURCE:version.txt" | head -n1 | tr -d '[:space:]')   # e.g. 5.0
+          major=${line%%.*}
+          TARGET="$CHANNEL/$major.x"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "Promoting $SOURCE (line $line) into $TARGET"
 
-          Promoted from main at ${{ github.sha }} by ${{ github.actor }}.
+          if git ls-remote --exit-code --heads origin "$TARGET" >/dev/null; then
+            git checkout -B "$TARGET" "origin/$TARGET"
+
+            # A line's channels only ever receive that line's integration branch.
+            target_line=$(git show "origin/$TARGET:version.txt" | head -n1 | tr -d '[:space:]')
+            if [ "${target_line%%.*}" != "$major" ]; then
+              echo "::error::$TARGET is on line $target_line but $SOURCE is on $line - refusing to merge across lines."
+              exit 1
+            fi
+
+            git merge --no-ff "origin/$SOURCE" -m "Merge $SOURCE into $TARGET: manual promotion
+
+          Promoted from $SOURCE at $(git rev-parse --short "origin/$SOURCE") by ${{ github.actor }}.
           The release workflow re-runs the full suite before packing."
 
-          if git diff --quiet HEAD "origin/$TARGET"; then
-            echo "::notice::$TARGET already matches main - nothing to publish."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            if git diff --quiet HEAD "origin/$TARGET"; then
+              echo "::notice::$TARGET already matches $SOURCE - nothing to publish."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           else
-            git push origin "$TARGET"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TARGET does not exist yet - creating it from $SOURCE."
+            git checkout -b "$TARGET" "origin/$SOURCE"
           fi
 
+          git push origin "$TARGET"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
       # A push made with GITHUB_TOKEN does not trigger other workflows - GitHub blocks
-      # that to prevent recursion. The release workflow is therefore dispatched
-      # explicitly rather than relying on its push trigger.
+      # that to prevent recursion - and creating a branch is skipped by the release
+      # workflow on purpose. The release workflow is therefore dispatched explicitly.
       - name: Trigger the release workflow
         if: steps.merge.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml --ref "${{ inputs.target }}"
+        run: gh workflow run release.yml --ref "${{ steps.merge.outputs.target }}"
