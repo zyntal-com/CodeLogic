@@ -44,8 +44,10 @@ public sealed class PluginManager : IAsyncDisposable
 
     // Identifies the lifecycle operation that currently holds _lifecycleLock. A plugin callback that
     // calls back into the manager runs in the same async flow, carries the same token, and would
-    // otherwise wait for itself forever.
-    private static readonly AsyncLocal<object?> _flowToken = new();
+    // otherwise wait for itself forever. Per instance: with a shared marker, a callback of manager A that
+    // calls manager B would overwrite A's marker, and a callback of B calling back into A would then wait
+    // on A's lock (held by A's operation, which is waiting on B) instead of failing fast.
+    private readonly AsyncLocal<object?> _flowToken = new();
     private object? _activeToken;
 
     /// <summary>Raised when a plugin is successfully loaded.</summary>
@@ -400,14 +402,9 @@ public sealed class PluginManager : IAsyncDisposable
             loaded.State = PluginState.Stopped;
         }
 
-        // Allow GC to collect the unloaded assembly
-        for (int i = 0; i < 10 && (loaded.WeakReference?.IsAlive ?? false); i++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            await Task.Delay(10).ConfigureAwait(false);
-        }
-
+        // No forced GC here. The unload completes once nothing references the plugin's types any more;
+        // the returned LoadedPlugin record itself still references the context, so blocking collections
+        // under the lifecycle lock could never finish it and only stalled the process.
         Console.WriteLine($"  + Plugin unloaded: {loaded.Manifest.Name}");
         return loaded;
     }
@@ -455,7 +452,7 @@ public sealed class PluginManager : IAsyncDisposable
     /// Marks the caller's execution context as running lifecycle operation <paramref name="token"/>.
     /// Deliberately not async, so the change stays in the caller's context. Returns the previous marker.
     /// </summary>
-    private static object? MarkFlow(object token)
+    private object? MarkFlow(object token)
     {
         var previous = _flowToken.Value;
         _flowToken.Value = token;

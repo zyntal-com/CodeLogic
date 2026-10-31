@@ -276,6 +276,76 @@ public sealed class PluginManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task Callback_reentering_its_own_manager_through_another_manager_throws_instead_of_deadlocking()
+    {
+        // A's unload callback calls B; B's unload callback calls back into A, whose lock A's operation holds.
+        // With one static flow marker, B's operation overwrote A's marker and A's reentrancy check missed it.
+        var busA = new EventBus();
+        var busB = new EventBus();
+        await using var managerA = new PluginManager(busA, new PluginOptions { PluginsDirectory = Path.Combine(_root, "plugins-a") });
+        await using var managerB = new PluginManager(busB, new PluginOptions { PluginsDirectory = Path.Combine(_root, "plugins-b") });
+        await managerA.LoadPluginAsync(PluginFolder("cross-a", "id=a\nreenter=unload"));
+        await managerB.LoadPluginAsync(PluginFolder("cross-b", "id=b\nreenter=unload"));
+        var other = PluginFolder("cross-other", "id=other");
+
+        Exception? outcome = null;
+        var reachedB = false;
+        using var subA = busA.SubscribeAsync<ComponentAlertEvent>(async e =>
+        {
+            if (e.AlertType == "reenter")
+                await managerB.UnloadPluginAsync("b").WaitAsync(ReentryTimeout * 2);
+        });
+        using var subB = busB.SubscribeAsync<ComponentAlertEvent>(async e =>
+        {
+            if (e.AlertType != "reenter") return;
+            reachedB = true;
+            try { await managerA.LoadPluginAsync(other).WaitAsync(ReentryTimeout); } // a deadlock surfaces as TimeoutException
+            catch (Exception ex) { outcome = ex; }
+        });
+
+        await managerA.UnloadPluginAsync("a").WaitAsync(ReentryTimeout * 4);
+
+        Assert.True(reachedB);
+        Assert.IsType<InvalidOperationException>(outcome);
+        Assert.Empty(managerA.GetLoadedPlugins());
+        Assert.Empty(managerB.GetLoadedPlugins());
+    }
+
+    [Fact]
+    public async Task Independent_managers_do_not_see_each_others_operations_as_reentrant()
+    {
+        var busA = new EventBus();
+        await using var managerA = new PluginManager(busA, new PluginOptions { PluginsDirectory = Path.Combine(_root, "plugins-a") });
+        await using var managerB = NewManager();
+        await managerA.LoadPluginAsync(PluginFolder("nest-a", "id=a\nreenter=start"));
+        var inner = PluginFolder("nest-b", "id=b");
+        // Manager A's start callback loads a plugin into manager B: legitimate nesting, must succeed.
+        using var sub = busA.SubscribeAsync<ComponentAlertEvent>(async e =>
+        {
+            if (e.AlertType == "reenter")
+                await managerB.LoadPluginAsync(inner).WaitAsync(ReentryTimeout);
+        });
+
+        await managerA.ReloadPluginAsync("a").WaitAsync(ReentryTimeout * 2);
+
+        Assert.NotNull(managerB.GetPlugin<IPlugin>("b"));
+    }
+
+    [Fact]
+    public async Task Unload_does_not_force_blocking_garbage_collections()
+    {
+        await using var pm = NewManager();
+        await pm.LoadPluginAsync(PluginFolder("gc", "id=gc"));
+
+        var before = GC.CollectionCount(2);
+        await pm.UnloadPluginAsync("gc").WaitAsync(ReentryTimeout);
+        var fullCollections = GC.CollectionCount(2) - before;
+
+        // The old loop always ran ten GC.Collect calls (the LoadedPlugin record kept the context alive).
+        Assert.True(fullCollections < 5, $"{fullCollections} gen-2 collections during one unload");
+    }
+
+    [Fact]
     public async Task Error_handler_reentering_the_manager_throws_instead_of_deadlocking()
     {
         await using var pm = NewManager();
