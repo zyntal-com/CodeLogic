@@ -34,8 +34,8 @@ public sealed class FrameworkConfig
     /// <summary>Display name for the framework. Default: "CodeLogic".</summary>
     public string Name { get; set; } = "CodeLogic";
 
-    /// <summary>Framework version string. Default: "3.0.0".</summary>
-    public string Version { get; set; } = "3.0.0";
+    /// <summary>Framework version string. Default: <see cref="CodeLogicEnvironment.FrameworkVersion"/>.</summary>
+    public string Version { get; set; } = CodeLogicEnvironment.FrameworkVersion;
 }
 
 /// <summary>

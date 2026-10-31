@@ -35,6 +35,27 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   `ObjectDisposedException`.
 - `PluginManager.RegisterInProcessPluginAsync` is now truly asynchronous, and `GetAllPlugins` /
   `GetLoadedPlugins` return snapshots instead of live views.
+- **Localization culture names are validated.** `LocalizationManager` (constructor default culture,
+  `GenerateTemplatesAsync`, `LoadAsync`, `LoadAllAsync`, `GenerateAllTemplatesAsync`, `ReloadAllAsync`)
+  accepts only culture names made of ASCII letters, digits, `-` and `_`, and checks that the file path
+  stays inside the localization directory. Anything else (`../x`, `C:`, spaces, empty) throws
+  `ArgumentException` instead of reading or writing a file outside the directory.
+- **Secret config fields are masked whatever their type.** `GetSchema(..., includeSecrets: false)` now
+  replaces every set value of a `[ConfigField(Secret = true)]` field with `ConfigField.SecretMask`:
+  numbers, `bool`, `Guid`, `DateTime`, enums and lists of them, not just strings (they used to be
+  returned in clear text). `null` and `""` stay visible. Secret enum fields no longer list
+  `AllowedValues`. `UpdateSectionAsync` restores an echoed mask in such a field from the stored value
+  (lists by position, list entries paired by key like string secrets); a mask with no stored
+  counterpart is rejected with a validation error.
+- **Library dependency versions use SemVer 2.0.** A `MinVersion` check now compares pre-release
+  versions instead of skipping them (`5.0.0-preview.1` no longer satisfies `>= 5.0.0`), and a set
+  `MinVersion` whose own value or the loaded library's `Version` cannot be parsed fails dependency
+  validation instead of passing silently.
+- **`SemanticVersion` follows SemVer 2.0.** It parses `-prerelease` and `+build` suffixes (new
+  `Prerelease`, `BuildMetadata`, `IsPrerelease` and a constructor overload taking them), orders by
+  SemVer precedence and ignores build metadata for equality. Leading zeros in numeric components and
+  signs/whitespace inside components are now rejected, and `ToString()` includes the suffixes.
+- `LibraryManager.GetAllLibraries` and `GetLoadedLibraries` return snapshots instead of live views.
 
 ### Added
 
@@ -44,6 +65,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - `ResultFailedException`, which carries the `Error`. `ValueOrThrow` and `ThrowIfFailure` throw it. It
   derives from `InvalidOperationException`, so existing `catch` blocks keep working; checks for the exact
   type (`Assert.Throws<InvalidOperationException>`) need `ThrowsAny` or the new type.
+- `CodeLogicEnvironment.FrameworkVersion`: the CodeLogic assembly's informational version without
+  the `+commit` suffix.
 
 ### Changed
 
@@ -54,6 +77,15 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   instances are cached.
 - `src` builds with `AnalysisLevel=latest-recommended`.
 - `global.json` pins the .NET 11 SDK, and CI installs it from there.
+- CI also builds `samples/CodeLogic.Demo.Console` and `samples/CodeLogic.Demo.Web`, so public API
+  breaks show up in pull requests.
+- `--version`, `--info`, the generated `CodeLogic.json`, the first-run marker and the
+  `FrameworkConfig.Version` default report `CodeLogicEnvironment.FrameworkVersion` instead of the
+  hardcoded `3.0.0`.
+- `PluginManager` unload no longer forces ten blocking full garbage collections while holding
+  the lifecycle lock. They could never complete the unload (the returned `LoadedPlugin` still
+  references the load context) and only stalled the process for 100 ms or more per plugin. The context
+  is collected once nothing references the plugin's types.
 
 ### Fixed
 
@@ -81,6 +113,19 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   rejected instead of saving the mask.
 - `release.yml` checks out the commit that triggered the run (`github.sha`) instead of the branch
   head, so the packed commit is always the verified, tagged one.
+- **Plugin reentrancy detection is per manager.** The flow marker was a static shared by every
+  `PluginManager`: when a callback of manager A called manager B, and a callback of B called back into
+  A, A's check missed it and the call deadlocked on A's lifecycle lock. It now throws
+  `InvalidOperationException` like any other reentrant call; independent managers can still nest calls.
+- **`LibraryManager` readers are safe during registration.** The library list is a copy-on-write
+  snapshot, so the assembly resolver, health checks, config watcher and accessors no longer throw
+  "Collection was modified" (or read a torn list) while a library is being registered.
+- **`LocalizationManager.ReloadAllAsync` no longer empties the cache first.** It loads into a new
+  snapshot and swaps it in, so concurrent `Get<T>` calls keep working during a reload and after a
+  failed one. Loads are serialized and `Get<T>` reads an immutable snapshot.
+- **`CodeLogicRuntime.ResetAsync` clears all run state.** It unregisters the CTRL+C / process-exit
+  handlers (re-initializing registers them again as configured), drops every event bus subscription
+  made during the previous run, and detaches the framework logger.
 
 ### Documentation
 

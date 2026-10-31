@@ -188,7 +188,8 @@ var options = new PluginOptions
 When the DLL changes:
 1. The watcher fires (debounced to avoid double-reloads)
 2. `ReloadPluginAsync` is called automatically
-3. The old assembly is unloaded from memory (GC.Collect loop)
+3. The old plugin is unloaded and its load context released; the runtime frees the old assembly once
+   nothing references its types any more (no forced GC)
 4. The new assembly is loaded and the full 4-phase lifecycle runs
 
 ```

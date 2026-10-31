@@ -91,8 +91,12 @@ public interface ILocalizationManager
 | `LoadAsync<T>(cultures)` | Loads localization files for each culture. Non-default cultures merge with the default. |
 | `GenerateAllTemplatesAsync(cultures)` | Generates templates for all registered types and all cultures. |
 | `LoadAllAsync(cultures)` | Loads all registered types for all cultures. Called automatically by the framework. |
-| `ReloadAllAsync(cultures)` | Reloads all localizations from disk. Always safe — pure string data. |
+| `ReloadAllAsync(cultures)` | Reloads all localizations from disk into a new snapshot. `Get<T>` keeps returning the previous translations until every file has loaded, and still does if the reload throws. |
 | `GetLoadedCultures<T>()` | Returns the list of cultures that have been successfully loaded for a type. |
+
+Culture names become part of the file name (`{section}.{culture}.json`), so every culture passed to these
+methods, and the default culture, must contain only ASCII letters, digits, `-` and `_` (for example `en-US`,
+`zh-Hans-CN`). Anything else, such as `../x`, throws `ArgumentException` before a file is touched.
 
 ---
 

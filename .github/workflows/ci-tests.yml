@@ -27,3 +27,9 @@ jobs:
 
       - name: Test
         run: dotnet test tests/CodeLogic.Tests/CodeLogic.Tests.csproj -c Release --logger "console;verbosity=normal"
+
+      # The samples compile against the public API, so a breaking change shows up here too.
+      - name: Build samples
+        run: |
+          dotnet build samples/CodeLogic.Demo.Console -c Release
+          dotnet build samples/CodeLogic.Demo.Web -c Release
