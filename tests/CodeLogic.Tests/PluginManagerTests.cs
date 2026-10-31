@@ -227,6 +227,86 @@ public sealed class PluginManagerTests : IDisposable
         await Assert.ThrowsAsync<ObjectDisposedException>(() => pm.LoadPluginAsync(path));
     }
 
+    // ── Re-entrancy: a callback that calls back into the manager must fail fast, not deadlock ──
+
+    private static readonly TimeSpan ReentryTimeout = TimeSpan.FromSeconds(5);
+
+    [Theory]
+    [InlineData("start", "load")]
+    [InlineData("start", "unload")]
+    [InlineData("start", "reload")]
+    [InlineData("start", "dispose")]
+    [InlineData("unload", "load")]
+    [InlineData("unload", "unload")]
+    [InlineData("unload", "reload")]
+    [InlineData("unload", "dispose")]
+    public async Task Lifecycle_callback_reentering_the_manager_throws_instead_of_deadlocking(string callback, string op)
+    {
+        await using var pm = NewManager();
+        var path = PluginFolder($"re-{callback}-{op}", $"id=re\nreenter={callback}");
+        var other = PluginFolder($"re-{callback}-{op}-other", "id=other");
+        Exception? outcome = null;
+        var reentered = false;
+
+        using var sub = _bus.SubscribeAsync<ComponentAlertEvent>(async e =>
+        {
+            if (e.AlertType != "reenter") return;
+            reentered = true;
+            try
+            {
+                Task nested = op switch
+                {
+                    "load"    => pm.LoadPluginAsync(other),
+                    "unload"  => pm.UnloadPluginAsync("re"),
+                    "reload"  => pm.ReloadPluginAsync("re"),
+                    "dispose" => pm.DisposeAsync().AsTask(),
+                    _ => throw new ArgumentOutOfRangeException(nameof(op))
+                };
+                await nested.WaitAsync(ReentryTimeout); // a deadlock surfaces as TimeoutException
+            }
+            catch (Exception ex) { outcome = ex; }
+        });
+
+        await pm.LoadPluginAsync(path).WaitAsync(ReentryTimeout * 2);
+        if (callback == "unload")
+            await pm.UnloadPluginAsync("re").WaitAsync(ReentryTimeout * 2);
+
+        Assert.True(reentered);
+        Assert.IsType<InvalidOperationException>(outcome);
+    }
+
+    [Fact]
+    public async Task Error_handler_reentering_the_manager_throws_instead_of_deadlocking()
+    {
+        await using var pm = NewManager();
+        var path = PluginFolder("re-error", "id=re-error\nfail=initialize");
+        Exception? outcome = null;
+        pm.OnPluginError += (_, _) =>
+        {
+            try { pm.UnloadAllAsync().WaitAsync(ReentryTimeout).GetAwaiter().GetResult(); }
+            catch (Exception ex) { outcome ??= ex; }
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => pm.LoadPluginAsync(path).WaitAsync(ReentryTimeout * 2));
+
+        Assert.IsType<InvalidOperationException>(outcome);
+    }
+
+    [Fact]
+    public async Task Loaded_handler_runs_after_the_operation_and_may_call_lifecycle_methods()
+    {
+        await using var pm = NewManager();
+        var path = PluginFolder("after", "id=after");
+        Task? nested = null;
+        pm.OnPluginLoaded += id => nested = pm.UnloadPluginAsync(id);
+
+        await pm.LoadPluginAsync(path).WaitAsync(ReentryTimeout);
+        await nested!.WaitAsync(ReentryTimeout);
+
+        Assert.Empty(pm.GetLoadedPlugins());
+    }
+
     [Fact]
     public async Task Runtime_reset_disposes_and_forgets_the_plugin_manager()
     {

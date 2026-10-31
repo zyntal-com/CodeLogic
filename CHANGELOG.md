@@ -59,8 +59,9 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 - **Plugin lifecycle is serialized.** Load, register, unload, reload, dispose and hot reload run one at
   a time; readers and health checks work on snapshots, so hot reload can no longer corrupt the plugin
-  table or throw "collection was modified". Calling lifecycle methods from inside a plugin's own
-  callback throws instead of deadlocking.
+  table or throw "collection was modified". Calling lifecycle methods on the same manager from a plugin's
+  lifecycle callback or an `OnPluginError` handler of the operation in progress throws
+  `InvalidOperationException` instead of deadlocking.
 - **Plugin failures clean up.** A failed load disposes the instance (after `OnUnloadAsync` when
   `OnStartAsync` was entered) and unloads its load context. A throwing `OnUnloadAsync` no longer skips
   `Dispose`, context unload and removal. Exceptions from `OnPluginLoaded`/`OnPluginUnloaded` handlers
