@@ -43,6 +43,11 @@ public sealed class ConfigFieldAttribute : Attribute
     /// When true, the field value is masked on read and — when the client echoes
     /// back the mask — the existing value is preserved on save. Typical for
     /// passwords, API keys, tokens.
+    /// <para>
+    /// Applies to string properties (current and default value) and to lists of strings
+    /// (each entry is masked; echoed masks are restored by position, and a list whose length
+    /// changed while entries are still masked is rejected). Non-string values are not masked.
+    /// </para>
     /// </summary>
     public bool Secret { get; set; }
 

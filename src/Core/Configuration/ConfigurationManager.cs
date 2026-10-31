@@ -20,7 +20,7 @@ public sealed class ConfigurationManager : IConfigurationManager
     private readonly ConcurrentDictionary<Type, ConfigModelBase> _loaded = new();   // effective values
     private readonly ConcurrentDictionary<Type, SectionState> _state = new();       // file vs effective snapshot
     private readonly Dictionary<Type, string> _registered = []; // Type → subConfigName
-    private readonly ConcurrentDictionary<string, string> _knownContent = new(StringComparer.OrdinalIgnoreCase); // path → hash
+    private readonly ConcurrentDictionary<string, string> _knownContent = new(Utilities.PathComparison.Comparer); // path → hash
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly Lock _notifyGate = new();
     private Task _notifyTail = Task.CompletedTask;
@@ -322,7 +322,12 @@ public sealed class ConfigurationManager : IConfigurationManager
         {
             // Preserve any masked secret fields by copying from the existing loaded instance.
             if (_loaded.TryGetValue(type, out var previous))
-                PreserveMaskedSecrets(type, previous, deserialized);
+            {
+                List<string> maskErrors = [];
+                PreserveMaskedSecrets(type, previous, deserialized, maskErrors);
+                if (maskErrors.Count > 0)
+                    return ConfigValidationResult.Invalid(maskErrors);
+            }
 
             var prepared = Prepare(type, StripRuntimeOverrides(type, deserialized));
             if (!prepared.Validation.IsValid)
@@ -512,18 +517,19 @@ public sealed class ConfigurationManager : IConfigurationManager
     {
         var path = GetFilePath(type);
 
-        if (!File.Exists(path))
-        {
-            if (!generateIfMissing)
-                throw new FileNotFoundException(
-                    $"Config file for '{type.Name}' not found at: {path}");
-
-            await GenerateDefaultAsync(type, force: false).ConfigureAwait(false);
-        }
-
         await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            // Checked under the write lock so a concurrent save/generate can't slip in between.
+            if (!File.Exists(path))
+            {
+                if (!generateIfMissing)
+                    throw new FileNotFoundException(
+                        $"Config file for '{type.Name}' not found at: {path}");
+
+                await WriteDefaultCoreAsync(type, path, force: false).ConfigureAwait(false);
+            }
+
             var persisted = Deserialize(await ReadFileAsync(path, CancellationToken.None).ConfigureAwait(false), type, path);
             var prepared = Prepare(type, persisted);
             if (!prepared.Validation.IsValid)
@@ -559,6 +565,14 @@ public sealed class ConfigurationManager : IConfigurationManager
     private async Task GenerateDefaultAsync(Type type, bool force)
     {
         var path = GetFilePath(type);
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try { await WriteDefaultCoreAsync(type, path, force).ConfigureAwait(false); }
+        finally { _writeLock.Release(); }
+    }
+
+    /// <summary>Writes the defaults file. The caller holds <see cref="_writeLock"/>.</summary>
+    private async Task WriteDefaultCoreAsync(Type type, string path, bool force)
+    {
         if (!force && File.Exists(path)) return;
 
         var defaults = Activator.CreateInstance(type)
@@ -628,11 +642,21 @@ public sealed class ConfigurationManager : IConfigurationManager
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
 
-        // Write-then-rename so readers (and crashes) never see a half-written file.
-        var tmp = path + ".tmp";
-        await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
-        RememberContent(path, json);
-        File.Move(tmp, path, overwrite: true);
+        // Write-then-rename so readers (and crashes) never see a half-written file. The temp name is
+        // unique, so even writers outside this manager (another instance on the same directory)
+        // never share or clobber it.
+        var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
+            RememberContent(path, json);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { /* best effort */ }
+            throw;
+        }
     }
 
     private async Task<string> ReadFileAsync(string path, CancellationToken ct)
@@ -669,9 +693,11 @@ public sealed class ConfigurationManager : IConfigurationManager
     /// equals <see cref="ConfigField.SecretMask"/> with the corresponding value
     /// from <paramref name="previous"/>. Recurses into nested objects,
     /// <c>Dictionary&lt;string,X&gt;</c> entries and <c>List&lt;X&gt;</c> entries
-    /// (see <see cref="PairListEntries"/>).
+    /// (see <see cref="PairListEntries"/>). Masked entries of a list of strings are restored by
+    /// position; when the list length changed they cannot be paired safely and an error is added
+    /// to <paramref name="errors"/> instead.
     /// </summary>
-    private static void PreserveMaskedSecrets(Type type, object previous, object incoming)
+    private static void PreserveMaskedSecrets(Type type, object previous, object incoming, List<string> errors)
     {
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0);
@@ -688,6 +714,13 @@ public sealed class ConfigurationManager : IConfigurationManager
                     var previousValue = prop.GetValue(previous);
                     prop.SetValue(incoming, previousValue);
                 }
+                continue;
+            }
+
+            if (ConfigSchemaBuilder.IsListOfString(pt))
+            {
+                if (prop.GetValue(incoming) is System.Collections.IList incomingList)
+                    RestoreMaskedListEntries(prop, prop.GetValue(previous) as System.Collections.IList, incomingList, errors);
                 continue;
             }
 
@@ -711,7 +744,7 @@ public sealed class ConfigurationManager : IConfigurationManager
                             var incomingEntry = incomingDict[key];
                             var previousEntry = prevDict[key];
                             if (incomingEntry is not null && previousEntry is not null)
-                                PreserveMaskedSecrets(valueType, previousEntry, incomingEntry);
+                                PreserveMaskedSecrets(valueType, previousEntry, incomingEntry, errors);
                         }
                     }
                     continue;
@@ -722,13 +755,33 @@ public sealed class ConfigurationManager : IConfigurationManager
                 {
                     foreach (var (previousEntry, incomingEntry) in PairListEntries(
                                  elementType, (System.Collections.IList)prevNested, (System.Collections.IList)incomingNested))
-                        PreserveMaskedSecrets(elementType, previousEntry, incomingEntry);
+                        PreserveMaskedSecrets(elementType, previousEntry, incomingEntry, errors);
                     continue;
                 }
 
-                PreserveMaskedSecrets(pt, prevNested, incomingNested);
+                PreserveMaskedSecrets(pt, prevNested, incomingNested, errors);
             }
         }
+    }
+
+    private static void RestoreMaskedListEntries(
+        PropertyInfo prop, System.Collections.IList? previous, System.Collections.IList incoming, List<string> errors)
+    {
+        var masked = false;
+        foreach (var entry in incoming)
+            if (entry is string s && s == ConfigField.SecretMask) { masked = true; break; }
+        if (!masked) return;
+
+        if (previous is null || previous.Count != incoming.Count)
+        {
+            errors.Add($"'{prop.Name}' still contains masked secret entries but its length changed; " +
+                       "send every entry in clear text to change the list.");
+            return;
+        }
+
+        for (var i = 0; i < incoming.Count; i++)
+            if (incoming[i] is string s && s == ConfigField.SecretMask)
+                incoming[i] = previous[i];
     }
 
     /// <summary>

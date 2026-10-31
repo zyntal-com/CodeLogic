@@ -107,6 +107,7 @@ internal static class ConfigSchemaBuilder
             if (IsListOfPrimitive(propType))
             {
                 // List of primitives renders as a single textarea (one value per line) — one field.
+                var listSecret = attr?.Secret ?? false;
                 accumulator.Add(new ConfigField
                 {
                     Path = fieldPath,
@@ -122,8 +123,8 @@ internal static class ConfigSchemaBuilder
                     Group = fieldGroup,
                     GroupCollapsed = fieldCollapsed,
                     Order = attr?.Order ?? 0,
-                    DefaultValue = defaultValue,
-                    CurrentValue = currentValue
+                    DefaultValue = listSecret && !includeSecrets ? MaskList(defaultValue) : defaultValue,
+                    CurrentValue = listSecret && !includeSecrets ? MaskList(currentValue) : currentValue
                 });
                 continue;
             }
@@ -162,9 +163,7 @@ internal static class ConfigSchemaBuilder
         }
 
         var typeHint = TypeHintFor(propType);
-        var maskedValue = isSecret && !includeSecrets && currentValue is string s && s.Length > 0
-            ? ConfigField.SecretMask
-            : currentValue;
+        var mask = isSecret && !includeSecrets;
 
         return new ConfigField
         {
@@ -184,10 +183,32 @@ internal static class ConfigSchemaBuilder
             Group = group,
             GroupCollapsed = groupCollapsed,
             Order = attr?.Order ?? 0,
-            DefaultValue = defaultValue,
-            CurrentValue = maskedValue
+            DefaultValue = mask ? MaskScalar(defaultValue) : defaultValue,
+            CurrentValue = mask ? MaskScalar(currentValue) : currentValue
         };
     }
+
+    /// <summary>A non-empty string becomes <see cref="ConfigField.SecretMask"/>; anything else is kept.</summary>
+    private static object? MaskScalar(object? value) =>
+        value is string { Length: > 0 } ? ConfigField.SecretMask : value;
+
+    /// <summary>
+    /// Copies a list of primitives with every non-empty string entry replaced by
+    /// <see cref="ConfigField.SecretMask"/>. Clients echo the masked entries back and
+    /// <see cref="ConfigurationManager.UpdateSectionAsync"/> restores them by position.
+    /// </summary>
+    private static List<object?>? MaskList(object? value)
+    {
+        if (value is not IList list) return null;
+        var masked = new List<object?>(list.Count);
+        foreach (var entry in list)
+            masked.Add(MaskScalar(entry));
+        return masked;
+    }
+
+    /// <summary>True for <c>List&lt;string&gt;</c> / <c>IList&lt;string&gt;</c> / <c>IReadOnlyList&lt;string&gt;</c>.</summary>
+    internal static bool IsListOfString(Type t) =>
+        IsListOfPrimitive(t) && t.GetGenericArguments()[0] == typeof(string);
 
     private static ConfigField BuildEnumField(
         PropertyInfo prop,
