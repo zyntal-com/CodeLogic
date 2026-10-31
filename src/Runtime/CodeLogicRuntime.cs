@@ -390,8 +390,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     /// </summary>
     public async Task<HealthReport> GetHealthAsync()
     {
-        var libraries = _libraryManager != null ? await _libraryManager.GetHealthAsync() : new Dictionary<string, HealthStatus>();
-        var plugins = _pluginManager != null ? await _pluginManager.GetHealthAsync() : new Dictionary<string, HealthStatus>();
+        var libraries = _libraryManager != null ? await _libraryManager.GetHealthAsync() : [];
+        var plugins = _pluginManager != null ? await _pluginManager.GetHealthAsync() : [];
 
         HealthStatus? appHealth = null;
         if (_application != null)

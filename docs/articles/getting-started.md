@@ -12,7 +12,7 @@ This guide walks you through installing CodeLogic 4, understanding the boot flow
 </ItemGroup>
 ```
 
-Target `net10.0` in your host project.
+Target `net11.0` in your host project.
 
 ---
 

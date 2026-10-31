@@ -5,8 +5,8 @@ namespace CodeLogic.Core.Utilities;
 /// </summary>
 public sealed class StartupValidator
 {
-    private readonly List<string> _errors = new();
-    private readonly List<string> _warnings = new();
+    private readonly List<string> _errors = [];
+    private readonly List<string> _warnings = [];
 
     /// <summary>Validates the framework root path, directory structure, and configuration.</summary>
     public ValidationResult Validate(string frameworkRootPath)

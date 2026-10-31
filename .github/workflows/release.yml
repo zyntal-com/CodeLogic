@@ -36,10 +36,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Compose version
         id: version
@@ -121,7 +122,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
           $runtimeZip = "artifacts/CodeLogic-${{ steps.version.outputs.tag_version }}.zip"
-          Compress-Archive -Path 'src/bin/Release/net10.0/*' -DestinationPath $runtimeZip -Force
+          Compress-Archive -Path 'src/bin/Release/net11.0/*' -DestinationPath $runtimeZip -Force
 
           @"
           ## CodeLogic ${{ steps.version.outputs.version }}

@@ -29,13 +29,13 @@ public sealed class HealthReport
     /// Health status for each library, keyed by library ID (e.g., "CL.SQLite").
     /// Only includes libraries in the <see cref="LibraryState.Started"/> state.
     /// </summary>
-    public Dictionary<string, HealthStatus> Libraries { get; init; } = new();
+    public Dictionary<string, HealthStatus> Libraries { get; init; } = [];
 
     /// <summary>
     /// Health status for each plugin, keyed by plugin ID.
     /// Only includes plugins in the <see cref="Framework.Application.Plugins.PluginState.Started"/> state.
     /// </summary>
-    public Dictionary<string, HealthStatus> Plugins { get; init; } = new();
+    public Dictionary<string, HealthStatus> Plugins { get; init; } = [];
 
     /// <summary>
     /// Health status from the registered application, or null if no application is registered.

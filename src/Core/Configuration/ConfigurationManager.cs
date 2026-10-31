@@ -19,7 +19,7 @@ public sealed class ConfigurationManager : IConfigurationManager
     private readonly string _baseDirectory;
     private readonly ConcurrentDictionary<Type, ConfigModelBase> _loaded = new();   // effective values
     private readonly ConcurrentDictionary<Type, SectionState> _state = new();       // file vs effective snapshot
-    private readonly Dictionary<Type, string> _registered = new(); // Type → subConfigName
+    private readonly Dictionary<Type, string> _registered = []; // Type → subConfigName
     private readonly ConcurrentDictionary<string, string> _knownContent = new(StringComparer.OrdinalIgnoreCase); // path → hash
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly object _notifyGate = new();
@@ -259,7 +259,7 @@ public sealed class ConfigurationManager : IConfigurationManager
     /// <inheritdoc />
     public IReadOnlyList<ConfigSectionInfo> GetSections()
     {
-        var result = new List<ConfigSectionInfo>(_registered.Count);
+        List<ConfigSectionInfo> result = [with(capacity: _registered.Count)];
         foreach (var (type, subName) in _registered)
         {
             var path = GetFilePath(type);
@@ -743,7 +743,7 @@ public sealed class ConfigurationManager : IConfigurationManager
         var keyProp = ConfigSchemaBuilder.FindKeyProperty(elementType);
         if (keyProp is not null)
         {
-            var byKey = new Dictionary<string, object>(StringComparer.Ordinal);
+            Dictionary<string, object> byKey = [with(StringComparer.Ordinal)];
             foreach (var entry in previous)
                 if (entry is not null && keyProp.GetValue(entry) is string key)
                     byKey.TryAdd(key, entry);

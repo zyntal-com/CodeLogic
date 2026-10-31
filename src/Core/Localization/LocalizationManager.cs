@@ -15,8 +15,8 @@ public sealed class LocalizationManager : ILocalizationManager
     private readonly string _defaultCulture;
 
     // Type → Culture → Localization instance
-    private readonly Dictionary<Type, Dictionary<string, object>> _localizations = new();
-    private readonly Dictionary<Type, bool> _registered = new();
+    private readonly Dictionary<Type, Dictionary<string, object>> _localizations = [];
+    private readonly Dictionary<Type, bool> _registered = [];
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -90,7 +90,7 @@ public sealed class LocalizationManager : ILocalizationManager
         where T : LocalizationModelBase, new()
     {
         var type = typeof(T);
-        _localizations.TryAdd(type, new Dictionary<string, object>());
+        _localizations.TryAdd(type, []);
 
         T? defaultLocalization = null;
 
@@ -191,7 +191,7 @@ public sealed class LocalizationManager : ILocalizationManager
                 $"Failed to deserialize default '{type.Name}' localization.");
 
         localization.Culture = _defaultCulture;
-        _localizations.TryAdd(type, new Dictionary<string, object>());
+        _localizations.TryAdd(type, []);
         _localizations[type][_defaultCulture] = localization;
         return localization;
     }

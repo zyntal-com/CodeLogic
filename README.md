@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
 </p>
 
-<p align="center">A modular .NET 10 framework for building structured, lifecycle-managed applications with clean separation between core infrastructure, framework orchestration, and library integrations.</p>
+<p align="center">A modular .NET 11 framework for building structured, lifecycle-managed applications with clean separation between core infrastructure, framework orchestration, and library integrations.</p>
 
 ## Why CodeLogic?
 
@@ -20,7 +20,7 @@ CodeLogic gives you a **structured lifecycle** out of the box:
 - **Libraries** (reusable integrations) and **Applications** (your business logic) follow the same 4-phase lifecycle: Configure → Initialize → Start → Stop. Dependencies are always resolved in the right order.
 - **Configuration** and **Localization** are built in — not bolted on. Each library and application gets its own config file, auto-generated on first run with defaults and validation. Config can be changed and reloaded while running — libraries can apply a change to just the instance that changed (e.g. one database out of three) without a restart.
 - **Plugins** are first-class citizens with hot-reload, isolated assembly contexts, and the same lifecycle as libraries.
-- **Zero external dependencies.** CodeLogic itself has no NuGet dependencies — it's pure .NET 10. External integrations (MySQL, S3, SMTP, etc.) are optional library packages in the [CodeLogic.* family](https://github.com/zyntal-com/CodeLogic.Libs).
+- **Zero external dependencies.** CodeLogic itself has no NuGet dependencies — it's pure .NET 11. External integrations (MySQL, S3, SMTP, etc.) are optional library packages in the [CodeLogic.* family](https://github.com/zyntal-com/CodeLogic.Libs).
 
 ## Install
 
@@ -220,7 +220,7 @@ health checks, and native-provider access. Existing `CodeLogic.StorageS3` users 
 
 ## Requirements
 
-- .NET 10 SDK or later
+- .NET 11 SDK or later
 - No external NuGet dependencies (the core framework is self-contained)
 
 ## Documentation

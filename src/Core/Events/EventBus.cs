@@ -6,7 +6,7 @@ namespace CodeLogic.Core.Events;
 /// </summary>
 public sealed class EventBus : IEventBus
 {
-    private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = new();
+    private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = [];
     private readonly object _lock = new();
 
     /// <inheritdoc />
@@ -90,7 +90,7 @@ public sealed class EventBus : IEventBus
         {
             if (!_subscriptions.TryGetValue(eventType, out var list))
             {
-                list = new List<SubscriptionEntry>();
+                list = [];
                 _subscriptions[eventType] = list;
             }
             list.Add(entry);

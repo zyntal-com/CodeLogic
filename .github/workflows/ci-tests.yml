@@ -16,10 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Build
         run: dotnet build src/CodeLogic.csproj -c Release

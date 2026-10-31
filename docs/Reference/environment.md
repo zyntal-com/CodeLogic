@@ -35,7 +35,7 @@ The directory containing the application executable. Equivalent to `AppContext.B
 
 ```csharp
 string root = CodeLogicEnvironment.AppRootPath;
-// C:\MyApp\bin\Release\net10.0\
+// C:\MyApp\bin\Release\net11.0\
 ```
 
 All framework paths (FrameworkRoot, Libraries, etc.) are relative to this directory.

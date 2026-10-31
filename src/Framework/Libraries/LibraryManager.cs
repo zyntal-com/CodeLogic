@@ -16,7 +16,7 @@ public sealed class LibraryManager : IDisposable
 {
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly List<LoadedLibrary> _libraries = [];
-    private readonly Dictionary<string, ILibrary> _librariesById = new();
+    private readonly Dictionary<string, ILibrary> _librariesById = [];
     private readonly IEventBus _eventBus;
     private readonly object _configOverrideLock = new();
     private readonly List<ConfigOverrideRegistration> _configOverrides = [];

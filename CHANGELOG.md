@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased: .NET 11
+
+### Changed
+
+- **Targets `net11.0`** (was `net10.0`). Consumers must target .NET 11 or later.
+- Builds with C# 15 (`LangVersion` 15). Collections that take a comparer or capacity use
+  collection expression arguments, e.g. `[with(StringComparer.OrdinalIgnoreCase), ...]`.
+- Async methods compile to .NET 11 runtime-native async, which gives shorter stack traces
+  and lower overhead. The source did not change for this.
+- `global.json` pins the .NET 11 SDK (prerelease allowed until GA), and CI installs the SDK
+  from it.
+
 ## 4.9.x
 
 ### Added

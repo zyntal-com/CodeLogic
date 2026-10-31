@@ -17,8 +17,8 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly LoggingOptions _loggingOptions;
     private readonly string _defaultCulture;
     private readonly IReadOnlyList<string> _supportedCultures;
-    private readonly Dictionary<string, LoadedPlugin> _plugins = new();
-    private readonly Dictionary<string, DateTime> _reloadDebounce = new();
+    private readonly Dictionary<string, LoadedPlugin> _plugins = [];
+    private readonly Dictionary<string, DateTime> _reloadDebounce = [];
     private readonly object _reloadLock = new();
     private FileSystemWatcher? _watcher;
 
