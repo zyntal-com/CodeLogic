@@ -20,8 +20,12 @@ namespace CodeLogic.Framework.Application.Plugins;
 /// <see cref="GetHealthAsync"/>) never block and work on a snapshot.</item>
 /// <item>Plugin IDs are unique. Loading a plugin whose ID is already loaded fails without starting it;
 /// use <see cref="ReloadPluginAsync"/> or unload the running one first.</item>
-/// <item>Do not call lifecycle methods from inside a plugin's own lifecycle callbacks; that is
-/// rejected with <see cref="InvalidOperationException"/> instead of deadlocking.</item>
+/// <item>Lifecycle methods (load, unload, reload, unload-all, register, dispose) called from code that runs
+/// inside an operation in progress — a plugin's <c>OnConfigureAsync</c>/<c>OnInitializeAsync</c>/
+/// <c>OnStartAsync</c>/<c>OnUnloadAsync</c>/<c>Dispose</c>, or an <see cref="OnPluginError"/> handler — throw
+/// <see cref="InvalidOperationException"/> immediately instead of deadlocking. The same applies to work those
+/// callbacks start, if it calls back while that operation is still running. <see cref="OnPluginLoaded"/> and
+/// <see cref="OnPluginUnloaded"/> handlers run after the lock is released and may call lifecycle methods.</item>
 /// </list>
 /// </remarks>
 public sealed class PluginManager : IAsyncDisposable
@@ -94,7 +98,8 @@ public sealed class PluginManager : IAsyncDisposable
     /// <exception cref="FileNotFoundException">The assembly does not exist.</exception>
     /// <exception cref="InvalidOperationException">
     /// The assembly has no <see cref="IPlugin"/>, a plugin with the same ID is already loaded, or the
-    /// call was made from inside a plugin lifecycle callback.
+    /// call was made from inside a plugin lifecycle callback or <see cref="OnPluginError"/> handler of an
+    /// operation in progress. The other lifecycle methods throw it in that case too.
     /// </exception>
     /// <remarks>
     /// When any phase fails, the plugin is cleaned up before the exception is rethrown: a plugin whose
@@ -108,12 +113,12 @@ public sealed class PluginManager : IAsyncDisposable
             throw new FileNotFoundException($"Plugin not found: {pluginPath}");
 
         string? loadedId;
-        await EnterLifecycleAsync().ConfigureAwait(false);
+        var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
         {
             loadedId = await LoadCoreAsync(pluginPath).ConfigureAwait(false);
         }
-        finally { ExitLifecycle(); }
+        finally { ExitLifecycle(previousFlow); }
 
         NotifyLoaded(loadedId);
     }
@@ -148,7 +153,7 @@ public sealed class PluginManager : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         var manifest = plugin.Manifest;
 
-        await EnterLifecycleAsync().ConfigureAwait(false);
+        var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
         {
             if (_plugins.ContainsKey(manifest.Id))
@@ -171,7 +176,7 @@ public sealed class PluginManager : IAsyncDisposable
                 State         = PluginState.Started
             };
         }
-        finally { ExitLifecycle(); }
+        finally { ExitLifecycle(previousFlow); }
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"  + Plugin registered (in-process): {manifest.Name} v{manifest.Version}");
@@ -190,12 +195,12 @@ public sealed class PluginManager : IAsyncDisposable
     public async Task UnloadPluginAsync(string pluginId)
     {
         LoadedPlugin? unloaded;
-        await EnterLifecycleAsync().ConfigureAwait(false);
+        var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
         {
             unloaded = await UnloadCoreAsync(pluginId).ConfigureAwait(false);
         }
-        finally { ExitLifecycle(); }
+        finally { ExitLifecycle(previousFlow); }
 
         NotifyUnloaded(unloaded);
     }
@@ -204,12 +209,12 @@ public sealed class PluginManager : IAsyncDisposable
     public async Task UnloadAllAsync()
     {
         List<LoadedPlugin> unloaded;
-        await EnterLifecycleAsync().ConfigureAwait(false);
+        var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
         {
             unloaded = await UnloadAllCoreAsync().ConfigureAwait(false);
         }
-        finally { ExitLifecycle(); }
+        finally { ExitLifecycle(previousFlow); }
 
         foreach (var plugin in unloaded)
             NotifyUnloaded(plugin);
@@ -221,7 +226,7 @@ public sealed class PluginManager : IAsyncDisposable
     {
         LoadedPlugin? unloaded = null;
         string? loadedId;
-        await EnterLifecycleAsync().ConfigureAwait(false);
+        var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
         {
             if (!_plugins.TryGetValue(pluginId, out var loaded))
@@ -234,7 +239,7 @@ public sealed class PluginManager : IAsyncDisposable
         }
         finally
         {
-            ExitLifecycle();
+            ExitLifecycle(previousFlow);
             NotifyUnloaded(unloaded);
         }
 
@@ -409,13 +414,30 @@ public sealed class PluginManager : IAsyncDisposable
 
     // ── Lifecycle serialization ──────────────────────────────────────────────
 
-    private async Task EnterLifecycleAsync()
+    // Every public lifecycle method follows the same pattern:
+    //
+    //     var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
+    //     try { ... } finally { ExitLifecycle(previousFlow); }
+    //
+    // The AsyncLocal marker must be set by the synchronous MarkFlow in the public method's own frame:
+    // a value set inside an awaited async helper is discarded when that helper returns, so plugin
+    // callbacks and error handlers invoked afterwards would not inherit it, and a callback that awaited
+    // another lifecycle call would wait on the semaphore it is itself holding.
+
+    private void ThrowIfReentrant()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
         var flow = _flowToken.Value;
         if (flow is not null && ReferenceEquals(flow, Volatile.Read(ref _activeToken)))
             throw new InvalidOperationException(
-                "PluginManager lifecycle methods cannot be called from inside a plugin lifecycle callback.");
+                "PluginManager lifecycle methods cannot be called from inside a plugin lifecycle callback " +
+                "or a PluginManager event handler raised by the operation in progress.");
+    }
+
+    /// <summary>Waits for the lifecycle lock and returns the token identifying this operation.</summary>
+    private async Task<object> AcquireLifecycleAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfReentrant();
 
         await _lifecycleLock.WaitAsync().ConfigureAwait(false);
         if (_disposed)
@@ -426,13 +448,25 @@ public sealed class PluginManager : IAsyncDisposable
 
         var token = new object();
         Volatile.Write(ref _activeToken, token);
-        _flowToken.Value = token;
+        return token;
     }
 
-    private void ExitLifecycle()
+    /// <summary>
+    /// Marks the caller's execution context as running lifecycle operation <paramref name="token"/>.
+    /// Deliberately not async, so the change stays in the caller's context. Returns the previous marker.
+    /// </summary>
+    private static object? MarkFlow(object token)
+    {
+        var previous = _flowToken.Value;
+        _flowToken.Value = token;
+        return previous;
+    }
+
+    /// <summary>Restores the caller's previous marker and releases the lifecycle lock.</summary>
+    private void ExitLifecycle(object? previousFlow)
     {
         Volatile.Write(ref _activeToken, null);
-        _flowToken.Value = null;
+        _flowToken.Value = previousFlow;
         _lifecycleLock.Release();
     }
 
@@ -588,18 +622,21 @@ public sealed class PluginManager : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
+        ThrowIfReentrant(); // before touching the watcher
         _watcher?.Dispose();
         _watcher = null;
 
         List<LoadedPlugin> unloaded;
-        try { await EnterLifecycleAsync().ConfigureAwait(false); }
+        object token;
+        try { token = await AcquireLifecycleAsync().ConfigureAwait(false); }
         catch (ObjectDisposedException) { return; } // a concurrent DisposeAsync finished first
+        var previousFlow = MarkFlow(token);
         try
         {
             unloaded = await UnloadAllCoreAsync().ConfigureAwait(false);
             _disposed = true;
         }
-        finally { ExitLifecycle(); }
+        finally { ExitLifecycle(previousFlow); }
 
         foreach (var plugin in unloaded)
             NotifyUnloaded(plugin);

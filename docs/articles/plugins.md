@@ -149,7 +149,7 @@ await manager.UnloadAllAsync();                          // unload everything
 - A **failed load** cleans up: a plugin whose `OnStartAsync` was entered gets `OnUnloadAsync`, the instance is disposed, and its load context is unloaded. The exception is rethrown and also reported through `PluginFailedEvent` and `OnPluginError`.
 - A **failing `OnUnloadAsync`** doesn't stop the cleanup: the plugin is still disposed, removed and its context unloaded. The error is reported through `PluginFailedEvent` and `OnPluginError`, not thrown.
 - Exceptions from `OnPluginLoaded` / `OnPluginUnloaded` handlers are not plugin failures; they are written to `Console.Error` and ignored.
-- Don't call `PluginManager` lifecycle methods from inside a plugin's own lifecycle callbacks; that throws `InvalidOperationException` instead of deadlocking.
+- **No re-entry.** Calling `LoadPluginAsync`, `UnloadPluginAsync`, `ReloadPluginAsync`, `UnloadAllAsync`, `RegisterInProcessPluginAsync` or `DisposeAsync` on the same manager from inside an operation in progress — from a plugin's `OnConfigureAsync`, `OnInitializeAsync`, `OnStartAsync`, `OnUnloadAsync` or `Dispose`, or from an `OnPluginError` handler — throws `InvalidOperationException` immediately instead of deadlocking. Work those callbacks start (for example with `Task.Run`) is treated the same while that operation is still running. `OnPluginLoaded` and `OnPluginUnloaded` handlers run after the operation has finished and may call lifecycle methods.
 
 ---
 
