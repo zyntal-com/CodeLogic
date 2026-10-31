@@ -18,3 +18,27 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies"]
+
+  # ── 4.x maintenance line (.NET 10, branch support/4.x) ──────────────────────────────
+  # Patch and minor updates only; a major bump belongs on main (5.x).
+  - package-ecosystem: nuget
+    directory: "/"
+    target-branch: support/4.x
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      support-4x:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: support/4.x
+    schedule:
+      interval: weekly
+    labels: ["dependencies"]

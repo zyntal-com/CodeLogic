@@ -4,7 +4,7 @@
 
 5.0 targets .NET 11 and uses C# 15 in the public API. Read
 [Migrating to 5.0](docs/articles/migrating-to-5.md) before upgrading. The 4.x line (.NET 10)
-continues on the `release-4.x` branch.
+continues on the `support/4.x` branch (published from `release/4.x`).
 
 ### Breaking
 

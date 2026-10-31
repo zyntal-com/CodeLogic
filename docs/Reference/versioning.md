@@ -1,7 +1,8 @@
 # Versioning
 
 Every CodeLogic package — the framework and all official `CodeLogic.*` libraries —
-shares one version line: **`4.9.<patch>`**.
+shares one version line per major version: **`5.0.<patch>`** on .NET 11 (branch `main`)
+and **`4.9.<patch>`** on .NET 10 (branch `support/4.x`). See [Releasing](#releasing).
 
 Only the patch number moves. It is never hand-edited.
 
@@ -69,19 +70,47 @@ signal a minor bump is meant to carry.
 
 ## Releasing
 
-Both repositories build from branch pushes. Nothing is written back to the repo.
+Each major version is a **release line** with its own branches. Both repositories (CodeLogic and
+CodeLogic.Libs) use the same layout:
 
-| Push to | Result |
-|---------|--------|
-| `main` | Nothing. `main` is the working branch. |
-| `prerelease` | Publishes `4.9.<run>-preview+<sha>` to NuGet, tagged as a GitHub pre-release. |
-| `release` | Publishes `4.9.<run>+<sha>` to NuGet, tagged as a full GitHub release. |
+| Line | Target | Integration branch | Preview channel | Stable channel |
+|------|--------|--------------------|-----------------|----------------|
+| 5.x | .NET 11 | `main` | `prerelease/5.x` | `release/5.x` |
+| 4.x | .NET 10 | `support/4.x` | `prerelease/4.x` | `release/4.x` |
 
-The **Promote main** workflow (Actions tab, run manually) merges `main` into `prerelease` or
-`release` and starts the publish. Nothing promotes `main` automatically.
+| Branch | Who writes to it | What happens |
+|--------|------------------|--------------|
+| `main`, `support/4.x` | Pull requests only. Required checks (the full suite, including the database jobs in CodeLogic.Libs) must pass. | Nothing is published. |
+| `prerelease/<N>.x` | The **Promote** workflow only (protected). | Publishes `<major.minor>.<run>-preview+<sha>`, tagged as a GitHub pre-release. |
+| `release/<N>.x` | The **Promote** workflow only (protected). | Publishes `<major.minor>.<run>+<sha>`, tagged as a full GitHub release. |
 
-A local or developer build leaves the patch at `0`, producing a stable `4.9.0`.
-That value is never published — it only keeps local builds reproducible.
+Nothing is written back to the repository, and nothing promotes automatically.
+
+### Shipping a change
+
+1. Branch from the line's integration branch (`main` for 5.x, `support/4.x` for 4.x) and open a pull
+   request back into it. CI runs the full suite; merge when it is green.
+2. Run **Promote** from the Actions tab. Pick the `source` (`main` or `support/4.x`) and the `channel`
+   (`prerelease` or `release`). It merges the source into `<channel>/<major>.x`, reading the major
+   from the source's `version.txt`, and refuses to merge across lines.
+3. The release workflow on that branch re-runs the full suite, packs, pre-flights every package and
+   publishes. In CodeLogic.Libs only libraries changed since that line's last release tag
+   (`libs-v<major.minor>-<run>`) are packed.
+
+A fix that applies to both lines is made on one integration branch and cherry-picked in a second
+pull request into the other.
+
+CodeLogic.Libs depends on the framework line of the same major, so publish a CodeLogic change
+before the library change that needs it.
+
+A local or developer build leaves the patch at `0`, producing a stable `<major.minor>.0`.
+That value is never published; it only keeps local builds reproducible.
+
+### Starting the next major
+
+When `main` moves to 6.0: create `support/5.x` from `main` (it becomes the 5.x integration branch),
+add it to the `source` choices in `.github/workflows/promote.yml`, then raise `version.txt` on `main`.
+The first Promote of `main` creates `prerelease/6.x` / `release/6.x`. No other workflow change is needed.
 
 ### Publishing
 
@@ -102,7 +131,7 @@ Edit `version.txt` in **both** repositories, in the same change:
 4.9   →   4.10
 ```
 
-Then push to `release` as usual. The next run publishes `4.9.<run>`. Nothing
+Then run Promote as usual. The next run publishes `4.9.<run>`. Nothing
 else needs touching — no csproj, no workflow, no documentation constant.
 
 Because this changes assembly binding identity, treat it as a deliberate,

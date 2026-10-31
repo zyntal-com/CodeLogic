@@ -1,6 +1,6 @@
 # Migrating to CodeLogic 5.0
 
-CodeLogic 5.0 targets **.NET 11 only** and builds on C# 15. The 4.x line (.NET 10) stays on nuget.org and gets fixes from the `release-4.x` branch, so you can move when you're ready.
+CodeLogic 5.0 targets **.NET 11 only** and builds on C# 15. The 4.x line (.NET 10) stays on nuget.org and gets fixes from the `support/4.x` branch, so you can move when you're ready.
 
 ## Before you start
 
