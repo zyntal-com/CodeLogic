@@ -98,7 +98,7 @@ public static class FirstRunManager
         {
             var config = new
             {
-                framework = new { name = "CodeLogic", version = "3.0.0" },
+                framework = new { name = "CodeLogic", version = CodeLogicEnvironment.FrameworkVersion },
                 logging = new
                 {
                     mode = "singleFile",
@@ -161,7 +161,7 @@ public static class FirstRunManager
         var marker = new
         {
             initializedAt = DateTime.UtcNow,
-            version = "3.0.0",
+            version = CodeLogicEnvironment.FrameworkVersion,
             machine = Environment.MachineName
         };
         var json = JsonSerializer.Serialize(marker, _jsonOptions);

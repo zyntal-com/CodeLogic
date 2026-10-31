@@ -76,6 +76,13 @@ public sealed class EventBus : IEventBus
         }
     }
 
+    /// <summary>Removes every subscription. Disposing a subscription afterwards is a no-op.</summary>
+    internal void Clear()
+    {
+        lock (_writeLock)
+            _subscriptions = [];
+    }
+
     private void AddEntry(Type eventType, SubscriptionEntry entry)
     {
         lock (_writeLock)
