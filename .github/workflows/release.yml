@@ -137,6 +137,8 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
+          # Tag the commit that was built. Without this a new tag lands on the default branch.
+          target_commitish: ${{ github.sha }}
           tag_name: v${{ steps.version.outputs.tag_version }}
           name: CodeLogic ${{ steps.version.outputs.tag_version }}
           body_path: artifacts/release-notes.md
