@@ -57,6 +57,14 @@ Timestamps, date folders in log paths, and upper-cased library and plugin IDs no
 - **Dependencies resolve inside the plugin.** A plugin no longer receives whatever assembly with a matching name is already loaded in the process. `CodeLogic` is always the host's copy; other dependencies come from the plugin's own folder first and from the host only when the plugin doesn't ship them. If the host and a plugin exchange types from another assembly (a shared contracts library, say) and the plugin ships its own copy, add that assembly's simple name to `PluginOptions.SharedAssemblies`.
 - **Plugin IDs must be unique.** `LoadPluginAsync` throws `InvalidOperationException` for an ID that is already loaded instead of replacing the running plugin. Use `ReloadPluginAsync` to replace one.
 - **`ResetAsync` disposes the registered `PluginManager`.** After a reset, create and register a new manager; the old one throws `ObjectDisposedException`.
+- **`ResetAsync` drops event subscriptions.** Every subscription on the runtime's event bus is removed by a reset, along with the shutdown handlers. Subscribe again after re-initializing.
+
+### Libraries, configuration and localization
+
+- **Dependency versions are SemVer 2.0.** `MinVersion` checks compare pre-release versions (`5.0.0-preview.1` does not satisfy `5.0.0`), and an unparseable `MinVersion` or library `Version` now fails dependency validation. `SemanticVersion` parses `-prerelease`/`+build`, rejects leading zeros, and its `ToString()` includes the suffixes.
+- **Non-string secrets are masked.** Admin UIs that read `GetSchema` get `ConfigField.SecretMask` for every set secret value, including numbers, `Guid`s and enums. Send the mask back unchanged to keep the stored value.
+- **Culture names are validated.** Localization cultures may contain only ASCII letters, digits, `-` and `_`; anything else throws `ArgumentException`.
+- **`LibraryManager.GetAllLibraries` / `GetLoadedLibraries` return snapshots** instead of live views.
 
 ## New in 5.0
 
