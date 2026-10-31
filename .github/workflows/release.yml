@@ -38,7 +38,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          # The immutable commit that triggered this run (the one `verify` tested and the tag and
+          # version provenance name), not the branch, which may have moved on since.
+          ref: ${{ github.sha }}
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
