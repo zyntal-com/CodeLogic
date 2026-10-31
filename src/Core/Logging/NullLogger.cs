@@ -23,4 +23,7 @@ public sealed class NullLogger : ILogger
     public void Error(string message, Exception? exception = null) { }
     /// <inheritdoc />
     public void Critical(string message, Exception? exception = null) { }
+
+    /// <summary>Always false: nothing is ever written, so callers can skip building messages.</summary>
+    public bool IsEnabled(LogLevel level) => false;
 }

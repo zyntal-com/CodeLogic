@@ -4,51 +4,32 @@ namespace CodeLogic.Core.Events;
 /// Thread-safe in-process event bus.
 /// One instance is shared across all library, application, and plugin contexts.
 /// </summary>
+/// <remarks>
+/// Publishing takes no lock and allocates nothing: subscribers live in an immutable snapshot
+/// (event type → handler array) that subscribe/unsubscribe replace under a lock (copy-on-write).
+/// A publish sees the subscribers that existed when it started.
+/// </remarks>
 public sealed class EventBus : IEventBus
 {
-    private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = [];
-    private readonly Lock _lock = new();
+    private static readonly SubscriptionEntry[] None = [];
+
+    private readonly Lock _writeLock = new();
+    private volatile Dictionary<Type, SubscriptionEntry[]> _subscriptions = [];
 
     /// <inheritdoc />
     public void Publish<T>(T @event) where T : IEvent
     {
-        var entries = GetSnapshot(typeof(T), @event);
-        foreach (var entry in entries)
-        {
-            try
-            {
-                if (entry.SyncHandler != null)
-                    entry.SyncHandler(@event);
-                else if (entry.AsyncHandler != null)
-                    // Fire-and-forget async handlers
-                    _ = InvokeSafeAsync(entry.AsyncHandler, @event);
-            }
-            catch (Exception ex)
-            {
-                // Log to stderr — never crash on event handler errors
-                Console.Error.WriteLine($"[EventBus] Handler error for {typeof(T).Name}: {ex.Message}");
-            }
-        }
+        var (exact, framework) = Resolve(typeof(T), @event);
+        foreach (var entry in exact) Invoke(entry, @event, typeof(T));
+        foreach (var entry in framework) Invoke(entry, @event, typeof(T));
     }
 
     /// <inheritdoc />
     public async Task PublishAsync<T>(T @event) where T : IEvent
     {
-        var entries = GetSnapshot(typeof(T), @event);
-        foreach (var entry in entries)
-        {
-            try
-            {
-                if (entry.SyncHandler != null)
-                    entry.SyncHandler(@event);
-                else if (entry.AsyncHandler != null)
-                    await entry.AsyncHandler(@event);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[EventBus] Handler error for {typeof(T).Name}: {ex.Message}");
-            }
-        }
+        var (exact, framework) = Resolve(typeof(T), @event);
+        foreach (var entry in exact) await InvokeAsync(entry, @event, typeof(T)).ConfigureAwait(false);
+        foreach (var entry in framework) await InvokeAsync(entry, @event, typeof(T)).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -77,41 +58,77 @@ public sealed class EventBus : IEventBus
 
     internal void Unsubscribe(Type eventType, SubscriptionEntry entry)
     {
-        lock (_lock)
+        lock (_writeLock)
         {
-            if (_subscriptions.TryGetValue(eventType, out var list))
-                list.Remove(entry);
+            var current = _subscriptions;
+            if (!current.TryGetValue(eventType, out var handlers))
+                return;
+            var index = Array.IndexOf(handlers, entry);
+            if (index < 0)
+                return;
+
+            var next = new Dictionary<Type, SubscriptionEntry[]>(current);
+            if (handlers.Length == 1)
+                next.Remove(eventType);
+            else
+                next[eventType] = [.. handlers.AsSpan(0, index), .. handlers.AsSpan(index + 1)];
+            _subscriptions = next;
         }
     }
 
     private void AddEntry(Type eventType, SubscriptionEntry entry)
     {
-        lock (_lock)
+        lock (_writeLock)
         {
-            if (!_subscriptions.TryGetValue(eventType, out var list))
-            {
-                list = [];
-                _subscriptions[eventType] = list;
-            }
-            list.Add(entry);
+            var current = _subscriptions;
+            var next = new Dictionary<Type, SubscriptionEntry[]>(current);
+            next[eventType] = current.TryGetValue(eventType, out var handlers) ? [.. handlers, entry] : [entry];
+            _subscriptions = next;
         }
     }
 
     // Subscribers are keyed by the static event type. Framework events are additionally delivered to
     // subscribers of the closed FrameworkEvent base, so one handler can switch over all of them.
-    private List<SubscriptionEntry> GetSnapshot(Type eventType, IEvent @event)
+    private (SubscriptionEntry[] Exact, SubscriptionEntry[] Framework) Resolve(Type eventType, IEvent @event)
     {
-        lock (_lock)
+        var snapshot = _subscriptions;
+        var exact = snapshot.TryGetValue(eventType, out var handlers) ? handlers : None;
+        var framework = @event is FrameworkEvent && eventType != typeof(FrameworkEvent)
+                        && snapshot.TryGetValue(typeof(FrameworkEvent), out var frameworkHandlers)
+            ? frameworkHandlers
+            : None;
+        return (exact, framework);
+    }
+
+    private static void Invoke(SubscriptionEntry entry, object @event, Type eventType)
+    {
+        try
         {
-            List<SubscriptionEntry> snapshot = _subscriptions.TryGetValue(eventType, out var list)
-                ? [.. list] // snapshot — don't hold lock during invocation
-                : [];
+            if (entry.SyncHandler != null)
+                entry.SyncHandler(@event);
+            else if (entry.AsyncHandler != null)
+                // Fire-and-forget async handlers
+                _ = InvokeSafeAsync(entry.AsyncHandler, @event);
+        }
+        catch (Exception ex)
+        {
+            // Log to stderr — never crash on event handler errors
+            Console.Error.WriteLine($"[EventBus] Handler error for {eventType.Name}: {ex.Message}");
+        }
+    }
 
-            if (@event is FrameworkEvent && eventType != typeof(FrameworkEvent)
-                && _subscriptions.TryGetValue(typeof(FrameworkEvent), out var frameworkSubscribers))
-                snapshot.AddRange(frameworkSubscribers);
-
-            return snapshot;
+    private static async Task InvokeAsync(SubscriptionEntry entry, object @event, Type eventType)
+    {
+        try
+        {
+            if (entry.SyncHandler != null)
+                entry.SyncHandler(@event);
+            else if (entry.AsyncHandler != null)
+                await entry.AsyncHandler(@event).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[EventBus] Handler error for {eventType.Name}: {ex.Message}");
         }
     }
 

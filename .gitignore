@@ -18,3 +18,5 @@ docs-output/
 # DocFX generated API yml files (regenerated in CI)
 docs/api/*.yml
 docs/api/.manifest
+
+BenchmarkDotNet.Artifacts/
