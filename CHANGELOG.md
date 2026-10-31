@@ -1,16 +1,40 @@
 # Changelog
 
-## Unreleased: .NET 11
+## 5.0.x
+
+5.0 targets .NET 11 and uses C# 15 in the public API. Read
+[Migrating to 5.0](docs/articles/migrating-to-5.md) before upgrading. The 4.x line (.NET 10)
+continues on the `release-4.x` branch.
+
+### Breaking
+
+- **Targets `net11.0` only** (was `net10.0`).
+- **`Error` is a `closed record`** with one subtype per kind: `NotFoundError`,
+  `ValidationError`, `InternalError`, `UnauthorizedError`, `ConflictError`, `TimeoutError`,
+  `UnavailableError`. The factories are unchanged and now return those subtypes. Errors
+  compare by value.
+- **`Result<T>` is a union of `T | Error`, and `Result` is a union of `Ok | Error`.** A
+  `switch` over them is checked for exhaustiveness. All 4.x members remain. A
+  `default(Result<T>)` is empty: it matches the `null` pattern and reports `Error.Empty`.
+- **The 13 framework events derive from `closed record FrameworkEvent`.** Subscribing to
+  `FrameworkEvent` receives all of them.
+- Log timestamps, date folders and upper-cased library/plugin IDs use the invariant culture.
+  This fixes Buddhist-calendar log paths on th-TH and Turkish-I casing.
+
+### Added
+
+- `Result<T>.Bind`, `Match`, `MapAsync`, `BindAsync`; `Result.Bind`, `Match`; `Ok`;
+  `Error.Empty`; value equality for `Result` and `Result<T>`.
 
 ### Changed
 
-- **Targets `net11.0`** (was `net10.0`). Consumers must target .NET 11 or later.
-- Builds with C# 15 (`LangVersion` 15). Collections that take a comparer or capacity use
-  collection expression arguments, e.g. `[with(StringComparer.OrdinalIgnoreCase), ...]`.
-- Async methods compile to .NET 11 runtime-native async, which gives shorter stack traces
-  and lower overhead. The source did not change for this.
-- `global.json` pins the .NET 11 SDK (prerelease allowed until GA), and CI installs the SDK
-  from it.
+- Builds with C# 15. Comparer and capacity collections use collection expression arguments
+  (`[with(StringComparer.OrdinalIgnoreCase), ...]`).
+- Async methods compile to .NET 11 runtime-native async (shorter stack traces, lower overhead).
+- `object` locks are replaced by `System.Threading.Lock`, and `JsonSerializerOptions`
+  instances are cached.
+- `src` builds with `AnalysisLevel=latest-recommended`.
+- `global.json` pins the .NET 11 SDK, and CI installs it from there.
 
 ## 4.9.x
 

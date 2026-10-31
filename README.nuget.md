@@ -214,7 +214,7 @@ health checks, and native-provider access. Existing `CodeLogic.StorageS3` users 
 
 ## Requirements
 
-- .NET 11 SDK or later
+- .NET 11 SDK or later. CodeLogic 5 targets `net11.0` only; on .NET 10, stay on CodeLogic 4.9.x ([migrating to 5.0](https://github.com/zyntal-com/CodeLogic/blob/main/docs/articles/migrating-to-5.md))
 - No external NuGet dependencies (the core framework is self-contained)
 
 ## Documentation
