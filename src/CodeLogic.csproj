@@ -84,4 +84,7 @@ Release notes truncated to fit NuGet's 35 000 character limit. The complete chan
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodeLogic.Tests" />
+  </ItemGroup>
 </Project>

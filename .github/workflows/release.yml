@@ -69,6 +69,22 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
 
+      # Strong-name signing (build/StrongName.props): releases are fully signed with the private key from the
+      # repository secret CL_STRONG_NAME_KEY (base64 of the .snk), the same key as CodeLogic.Libs. No secret, no
+      # release. The key only exists in the runner's temp directory.
+      - name: Strong-name key
+        shell: pwsh
+        env:
+          CL_STRONG_NAME_KEY: ${{ secrets.CL_STRONG_NAME_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CL_STRONG_NAME_KEY)) {
+            Write-Host "::error::secret CL_STRONG_NAME_KEY is not set - refusing to release unsigned packages"
+            exit 1
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'codelogic.snk'
+          [System.IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CL_STRONG_NAME_KEY.Trim()))
+          "CL_STRONG_NAME_KEY_FILE=$path" >> $env:GITHUB_ENV
+
       - name: Restore
         run: dotnet restore src/CodeLogic.csproj
 
@@ -76,14 +92,25 @@ jobs:
         run: |
           dotnet build src/CodeLogic.csproj --configuration Release --no-restore \
             /p:Version=${{ steps.version.outputs.version }} \
-            /p:InformationalVersion=${{ steps.version.outputs.version }}
+            /p:InformationalVersion=${{ steps.version.outputs.version }} \
+            /p:CLStrongNameKeyFile="$CL_STRONG_NAME_KEY_FILE"
 
       - name: Pack
         run: |
           dotnet pack src/CodeLogic.csproj --configuration Release --no-build --output artifacts \
             /p:PackageVersion=${{ steps.version.outputs.version }} \
             /p:Version=${{ steps.version.outputs.version }} \
-            /p:InformationalVersion=${{ steps.version.outputs.version }}
+            /p:InformationalVersion=${{ steps.version.outputs.version }} \
+            /p:CLStrongNameKeyFile="$CL_STRONG_NAME_KEY_FILE"
+
+      - name: Verify strong-name signatures
+        shell: pwsh
+        run: ./build/verify-strong-name.ps1 -Packages (Get-ChildItem artifacts -Filter '*.nupkg').FullName
+
+      - name: Remove strong-name key
+        if: always()
+        shell: pwsh
+        run: if ($env:CL_STRONG_NAME_KEY_FILE) { Remove-Item $env:CL_STRONG_NAME_KEY_FILE -Force -ErrorAction SilentlyContinue }
 
       # A partial push cannot be undone: dotnet nuget push walks artifacts one at a
       # time and aborts on the first rejection, leaving earlier packages published.

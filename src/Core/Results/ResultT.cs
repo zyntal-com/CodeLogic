@@ -156,7 +156,7 @@ public readonly struct Result<T> : Result<T>.IUnionMembers, IEquatable<Result<T>
 
     /// <summary>Returns the success value, or throws if the result is a failure.</summary>
     public T ValueOrThrow() =>
-        _isSuccess ? _value! : throw new InvalidOperationException($"Result is failure: {ErrorOrEmpty()}");
+        _isSuccess ? _value! : throw new ResultFailedException(ErrorOrEmpty());
 
     /// <inheritdoc />
     public bool Equals(Result<T> other) =>

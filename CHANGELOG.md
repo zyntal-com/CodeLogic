@@ -8,6 +8,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 ### Breaking
 
+- **Strong-named** with the CodeLogic key (public key token `53a89305eedc5d98`), shared with CodeLogic.Libs. Assemblies that reference CodeLogic now bind to a strong-named identity.
+
 - **Targets `net11.0` only** (was `net10.0`).
 - **`Error` is a `closed record`** with one subtype per kind: `NotFoundError`,
   `ValidationError`, `InternalError`, `UnauthorizedError`, `ConflictError`, `TimeoutError`,
@@ -25,6 +27,10 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 - `Result<T>.Bind`, `Match`, `MapAsync`, `BindAsync`; `Result.Bind`, `Match`; `Ok`;
   `Error.Empty`; value equality for `Result` and `Result<T>`.
+- `Result.ThrowIfFailure()`, the non-generic counterpart of `ValueOrThrow`.
+- `ResultFailedException`, which carries the `Error`. `ValueOrThrow` and `ThrowIfFailure` throw it. It
+  derives from `InvalidOperationException`, so existing `catch` blocks keep working; checks for the exact
+  type (`Assert.Throws<InvalidOperationException>`) need `ThrowsAny` or the new type.
 
 ### Changed
 

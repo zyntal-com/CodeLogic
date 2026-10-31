@@ -69,8 +69,8 @@ public sealed class StartupValidator
     private void ValidateSystemRequirements()
     {
         var version = Environment.Version;
-        if (version.Major < 10)
-            _warnings.Add($"Running on .NET {version}. Framework is optimized for .NET 10+");
+        if (version.Major < 11)
+            _warnings.Add($"Running on .NET {version}. CodeLogic 5 targets .NET 11");
 
         try
         {

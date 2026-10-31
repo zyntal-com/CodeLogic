@@ -119,11 +119,11 @@ record PluginFailedEvent(string PluginId, string PluginName, Exception Error) : 
 // Published after a specific config type is reloaded from disk
 record ConfigReloadedEvent(string ComponentId, Type ConfigType) : IEvent;
 
-// Published after any committed change (update, reload, reset) of a library config section (4.9.0+)
+// Published after any committed change (update, reload, reset) of a library config section
 record ConfigChangedEvent(string ComponentId, string SectionName, Type ConfigType,
     ConfigChangeKind Kind, string? ChangedBy) : IEvent;
 
-// Published when a valid, saved change could not be applied by the library (4.9.0+).
+// Published when a valid, saved change could not be applied by the library.
 // The library reports Degraded health until a later change applies.
 record ConfigApplyFailedEvent(string ComponentId, string SectionName, Exception Error) : IEvent;
 
