@@ -20,3 +20,7 @@ docs/api/*.yml
 docs/api/.manifest
 
 BenchmarkDotNet.Artifacts/
+
+# Strong-name keys: only the public key is committed; the private key lives in the CL_STRONG_NAME_KEY secret.
+*.snk
+!build/codelogic.public.snk

@@ -8,6 +8,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 ### Breaking
 
+- **Strong-named** with the CodeLogic key (public key token `53a89305eedc5d98`), shared with CodeLogic.Libs. Assemblies that reference CodeLogic now bind to a strong-named identity.
+
 - **Targets `net11.0` only** (was `net10.0`).
 - **`Error` is a `closed record`** with one subtype per kind: `NotFoundError`,
   `ValidationError`, `InternalError`, `UnauthorizedError`, `ConflictError`, `TimeoutError`,
