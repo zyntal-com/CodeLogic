@@ -218,11 +218,11 @@ public Task OnInitializeAsync(ApplicationContext context)
     _ctx = context;
 
     // Create and register the plugin manager
-    var plugins = new PluginManager(new PluginOptions
+    var plugins = new PluginManager(context.Events, new PluginOptions
     {
         PluginsDirectory = Path.Combine(context.DataDirectory, "plugins"),
-        EnableHotReload  = true
-    }, context.Logger, context.Events);
+        WatchForChanges  = true
+    });
 
     CodeLogic.SetPluginManager(plugins);
 

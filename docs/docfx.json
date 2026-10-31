@@ -18,7 +18,13 @@
         "files": ["api/**.yml", "api/index.md"]
       },
       {
-        "files": ["articles/**.md", "articles/**/toc.yml", "toc.yml", "index.md"]
+        "files": [
+          "articles/**.md", "articles/**/toc.yml",
+          "Core/**.md", "Core/toc.yml",
+          "Framework/**.md", "Framework/toc.yml",
+          "Reference/**.md", "Reference/toc.yml",
+          "getting-started.md", "toc.yml", "index.md"
+        ]
       }
     ],
     "resource": [

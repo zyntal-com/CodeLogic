@@ -1,5 +1,6 @@
 using System.Text;
 using System.Threading.Channels;
+using CodeLogic.Core.Utilities;
 
 namespace CodeLogic.Core.Logging;
 
@@ -14,7 +15,10 @@ namespace CodeLogic.Core.Logging;
 /// <item>The queue is bounded: when the disk cannot keep up, producers wait instead of the
 /// process growing without limit or lines being dropped.</item>
 /// <item>Files stay open with <see cref="FileShare.ReadWrite"/> | <see cref="FileShare.Delete"/>, so log
-/// viewers keep working; files idle for a while are closed (date-folder paths change daily).</item>
+/// viewers keep working; files idle for a while are closed (date-folder paths change daily), also when
+/// nothing is logged at all afterwards.</item>
+/// <item>A missing directory is (re)created when a file is opened, so a log folder deleted while the
+/// process runs, or a transient creation failure, recovers on the next line.</item>
 /// <item>Pending lines are flushed by <see cref="FlushAsync"/>, on process exit and on an unhandled
 /// exception.</item>
 /// </list>
@@ -25,7 +29,8 @@ internal sealed class LogFileWriter
     internal static LogFileWriter Shared { get; } = new();
 
     private const int Capacity = 10_000;
-    private static readonly TimeSpan IdleClose = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultIdleClose = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultMaintenanceInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExitFlushTimeout = TimeSpan.FromSeconds(3);
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly int NewLineBytes = Utf8NoBom.GetByteCount(Environment.NewLine);
@@ -37,14 +42,28 @@ internal sealed class LogFileWriter
         FullMode = BoundedChannelFullMode.Wait,
     });
 
-    // Owned by the consumer task only.
-    private readonly Dictionary<string, OpenFile> _files = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _createdDirectories = new(StringComparer.OrdinalIgnoreCase);
+    // Owned by the consumer task only. Paths compare the way the platform's file system does.
+    private readonly Dictionary<string, OpenFile> _files = new(PathComparison.Comparer);
+    private int _openFileCount;
 
+    private readonly TimeSpan _idleClose;
+    private readonly TimeSpan _maintenanceInterval;
+    private readonly bool _hookProcessExit;
     private readonly Lock _startLock = new();
     private Task? _consumer;
 
-    private LogFileWriter() { }
+    private LogFileWriter() : this(DefaultIdleClose, DefaultMaintenanceInterval, hookProcessExit: true) { }
+
+    /// <summary>A private writer with its own timings; tests use it.</summary>
+    internal LogFileWriter(TimeSpan idleClose, TimeSpan maintenanceInterval, bool hookProcessExit = false)
+    {
+        _idleClose = idleClose;
+        _maintenanceInterval = maintenanceInterval;
+        _hookProcessExit = hookProcessExit;
+    }
+
+    /// <summary>Number of files currently held open (diagnostics and tests).</summary>
+    internal int OpenFileCount => Volatile.Read(ref _openFileCount);
 
     /// <summary>Queues one entry. <paramref name="rollAtBytes"/> 0 disables size-based rolling.</summary>
     public void Enqueue(string path, string text, long rollAtBytes, int maxRolledFiles)
@@ -81,8 +100,11 @@ internal sealed class LogFileWriter
         {
             if (_consumer is not null)
                 return;
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => FlushOnExit();
-            AppDomain.CurrentDomain.UnhandledException += (_, _) => FlushOnExit();
+            if (_hookProcessExit)
+            {
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => FlushOnExit();
+                AppDomain.CurrentDomain.UnhandledException += (_, _) => FlushOnExit();
+            }
             Volatile.Write(ref _consumer, Task.Run(ConsumeAsync));
         }
     }
@@ -96,7 +118,7 @@ internal sealed class LogFileWriter
     private async Task ConsumeAsync()
     {
         var reader = _channel.Reader;
-        while (await reader.WaitToReadAsync().ConfigureAwait(false))
+        while (await WaitForEntriesAsync(reader).ConfigureAwait(false))
         {
             while (reader.TryRead(out var entry))
             {
@@ -112,6 +134,29 @@ internal sealed class LogFileWriter
             // The queue is drained: push buffered text to disk and close files nobody writes to.
             FlushAll();
             CloseIdleFiles();
+        }
+    }
+
+    /// <summary>
+    /// Waits for the next entry. While files are open the wait is bounded, so files that went idle
+    /// after the last line get closed even if nothing else is ever logged.
+    /// </summary>
+    private async Task<bool> WaitForEntriesAsync(ChannelReader<Entry> reader)
+    {
+        while (true)
+        {
+            if (_files.Count == 0)
+                return await reader.WaitToReadAsync().ConfigureAwait(false);
+
+            using var timeout = new CancellationTokenSource(_maintenanceInterval);
+            try
+            {
+                return await reader.WaitToReadAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                CloseIdleFiles();
+            }
         }
     }
 
@@ -150,16 +195,30 @@ internal sealed class LogFileWriter
         if (_files.TryGetValue(path, out var open))
             return open;
 
-        var directory = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(directory) && _createdDirectories.Add(directory))
+        FileStream stream;
+        try
+        {
+            stream = OpenStream(path);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // First file in the folder, or the folder was removed while we ran: create it and retry.
+            // Nothing is cached, so a failure here is retried on the next line instead of sticking.
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(directory))
+                throw;
             Directory.CreateDirectory(directory);
+            stream = OpenStream(path);
+        }
 
-        var stream = new FileStream(path, FileMode.Append, FileAccess.Write,
-            FileShare.ReadWrite | FileShare.Delete, bufferSize: 16 * 1024);
         open = new OpenFile(new StreamWriter(stream, Utf8NoBom, bufferSize: 16 * 1024), stream.Length);
         _files[path] = open;
+        Volatile.Write(ref _openFileCount, _files.Count);
         return open;
     }
+
+    private static FileStream OpenStream(string path) =>
+        new(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, bufferSize: 16 * 1024);
 
     private void FlushAll()
     {
@@ -178,7 +237,7 @@ internal sealed class LogFileWriter
     {
         if (_files.Count == 0)
             return;
-        var cutoff = Environment.TickCount64 - (long)IdleClose.TotalMilliseconds;
+        var cutoff = Environment.TickCount64 - (long)_idleClose.TotalMilliseconds;
         List<string>? idle = null;
         foreach (var (path, file) in _files)
             if (file.LastWrite < cutoff)
@@ -192,6 +251,7 @@ internal sealed class LogFileWriter
     {
         if (!_files.Remove(path, out var file))
             return;
+        Volatile.Write(ref _openFileCount, _files.Count);
         try { file.Writer.Dispose(); }
         catch { /* the handle is gone either way */ }
     }
