@@ -303,11 +303,10 @@ public sealed class ConfigurationManager : IConfigurationManager
     {
         var type = ResolveTypeForSection(sectionName);
 
-        ConfigModelBase deserialized;
+        JsonNode? node;
         try
         {
-            deserialized = JsonSerializer.Deserialize(json, type, _jsonOptions) as ConfigModelBase
-                ?? throw new InvalidOperationException("Deserialized config was null.");
+            node = JsonNode.Parse(json);
         }
         catch (JsonException ex)
         {
@@ -320,10 +319,30 @@ public sealed class ConfigurationManager : IConfigurationManager
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // Preserve any masked secret fields by copying from the existing loaded instance.
-            if (_loaded.TryGetValue(type, out var previous))
+            _loaded.TryGetValue(type, out var previous);
+            List<string> maskErrors = [];
+
+            // Non-string secrets (numbers, Guids, enums...) are masked with a string, which would not
+            // deserialize: put the stored value back on the JSON first.
+            if (node is JsonObject root)
+                RestoreMaskedTypedSecrets(type, previous, root, "", maskErrors);
+            if (maskErrors.Count > 0)
+                return ConfigValidationResult.Invalid(maskErrors);
+
+            ConfigModelBase deserialized;
+            try
             {
-                List<string> maskErrors = [];
+                deserialized = node.Deserialize(type, _jsonOptions) as ConfigModelBase
+                    ?? throw new InvalidOperationException("Deserialized config was null.");
+            }
+            catch (JsonException ex)
+            {
+                return ConfigValidationResult.Invalid($"Invalid JSON: {ex.Message}");
+            }
+
+            // Preserve any masked string secrets by copying from the existing loaded instance.
+            if (previous is not null)
+            {
                 PreserveMaskedSecrets(type, previous, deserialized, maskErrors);
                 if (maskErrors.Count > 0)
                     return ConfigValidationResult.Invalid(maskErrors);
@@ -763,6 +782,125 @@ public sealed class ConfigurationManager : IConfigurationManager
             }
         }
     }
+
+    /// <summary>
+    /// Walks the incoming JSON alongside <paramref name="type"/> and replaces every
+    /// <see cref="ConfigField.SecretMask"/> found where a non-string secret
+    /// (<see cref="ConfigSchemaBuilder.IsNonStringScalar"/>, or a list of them) is expected with the stored
+    /// value from <paramref name="previous"/>. Nested objects, dictionaries and lists of objects are paired
+    /// the same way as <see cref="PreserveMaskedSecrets"/>. A mask that cannot be paired with a stored
+    /// value adds an error instead.
+    /// </summary>
+    private static void RestoreMaskedTypedSecrets(Type type, object? previous, JsonObject node, string path, List<string> errors)
+    {
+        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0);
+
+        foreach (var prop in props)
+        {
+            var jsonName = JsonName(prop);
+            if (!node.TryGetPropertyValue(jsonName, out var child) || child is null) continue;
+
+            var pt = prop.PropertyType;
+            var fieldPath = path.Length == 0 ? jsonName : $"{path}.{jsonName}";
+            var previousValue = previous is null ? null : prop.GetValue(previous);
+            var secret = prop.GetCustomAttribute<ConfigFieldAttribute>()?.Secret ?? false;
+
+            if (ConfigSchemaBuilder.IsNonStringScalar(pt))
+            {
+                if (!secret || !IsMask(child)) continue;
+                if (previous is null)
+                    errors.Add(MaskWithoutValue(fieldPath));
+                else
+                    node[jsonName] = JsonSerializer.SerializeToNode(previousValue, pt, _jsonOptions);
+                continue;
+            }
+
+            if (ConfigSchemaBuilder.IsListOfPrimitive(pt))
+            {
+                var elementType = pt.GetGenericArguments()[0];
+                if (!secret || child is not JsonArray array
+                    || !ConfigSchemaBuilder.IsNonStringScalar(elementType)
+                    || !array.Any(IsMask)) continue;
+
+                if (previousValue is not System.Collections.IList previousList || previousList.Count != array.Count)
+                {
+                    errors.Add($"'{fieldPath}' still contains masked secret entries but its length changed; " +
+                               "send every entry in clear text to change the list.");
+                    continue;
+                }
+                for (var i = 0; i < array.Count; i++)
+                    if (IsMask(array[i]))
+                        array[i] = JsonSerializer.SerializeToNode(previousList[i], elementType, _jsonOptions);
+                continue;
+            }
+
+            if (!pt.IsClass || pt == typeof(string) || pt.IsArray) continue;
+
+            // Dictionary<string, X>
+            if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(Dictionary<,>) &&
+                pt.GetGenericArguments()[0] == typeof(string))
+            {
+                if (child is not JsonObject entries) continue;
+                var valueType = pt.GetGenericArguments()[1];
+                var previousDict = previousValue as System.Collections.IDictionary;
+                foreach (var entry in entries.ToList())
+                {
+                    if (entry.Value is JsonObject entryObject)
+                        RestoreMaskedTypedSecrets(valueType,
+                            previousDict is not null && previousDict.Contains(entry.Key) ? previousDict[entry.Key] : null,
+                            entryObject, $"{fieldPath}.{entry.Key}", errors);
+                }
+                continue;
+            }
+
+            // List<X> of objects
+            if (ConfigSchemaBuilder.IsListOfObjects(pt, out var objectType) && objectType is not null)
+            {
+                if (child is not JsonArray items) continue;
+                var previousItems = previousValue as System.Collections.IList;
+                var keyProp = ConfigSchemaBuilder.FindKeyProperty(objectType);
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (items[i] is not JsonObject item) continue;
+                    RestoreMaskedTypedSecrets(objectType, FindPreviousEntry(previousItems, items, i, item, keyProp),
+                        item, $"{fieldPath}.{i}", errors);
+                }
+                continue;
+            }
+
+            if (child is JsonObject nested)
+                RestoreMaskedTypedSecrets(pt, previousValue, nested, fieldPath, errors);
+        }
+    }
+
+    /// <summary>Same pairing rule as <see cref="PairListEntries"/>: by key property, else by position when the length is unchanged.</summary>
+    private static object? FindPreviousEntry(
+        System.Collections.IList? previous, JsonArray incoming, int index, JsonObject item, PropertyInfo? keyProp)
+    {
+        if (previous is null) return null;
+        if (keyProp is not null)
+        {
+            if (item[JsonName(keyProp)] is not JsonValue keyNode || !keyNode.TryGetValue<string>(out var key))
+                return null;
+            foreach (var entry in previous)
+                if (entry is not null && keyProp.GetValue(entry) is string existing && existing == key)
+                    return entry;
+            return null;
+        }
+        return previous.Count == incoming.Count ? previous[index] : null;
+    }
+
+    private static bool IsMask(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var s) && s == ConfigField.SecretMask;
+
+    private static string MaskWithoutValue(string path) =>
+        $"'{path}' still contains the masked secret placeholder but there is no stored value to keep; send the value in clear text.";
+
+    private static string JsonName(PropertyInfo prop) =>
+        prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
+        ?? _jsonOptions.PropertyNamingPolicy?.ConvertName(prop.Name)
+        ?? prop.Name;
 
     private static void RestoreMaskedListEntries(
         PropertyInfo prop, System.Collections.IList? previous, System.Collections.IList incoming, List<string> errors)

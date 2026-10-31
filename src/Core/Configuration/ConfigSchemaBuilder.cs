@@ -70,7 +70,7 @@ internal static class ConfigSchemaBuilder
 
             if (propType.IsEnum)
             {
-                accumulator.Add(BuildEnumField(prop, attr, fieldPath, propType, currentValue, defaultValue, fieldGroup, fieldCollapsed));
+                accumulator.Add(BuildEnumField(prop, attr, fieldPath, propType, currentValue, defaultValue, fieldGroup, fieldCollapsed, includeSecrets));
                 continue;
             }
 
@@ -188,12 +188,21 @@ internal static class ConfigSchemaBuilder
         };
     }
 
-    /// <summary>A non-empty string becomes <see cref="ConfigField.SecretMask"/>; anything else is kept.</summary>
-    private static object? MaskScalar(object? value) =>
-        value is string { Length: > 0 } ? ConfigField.SecretMask : value;
+    /// <summary>
+    /// Every set value becomes <see cref="ConfigField.SecretMask"/>, whatever its type; <see langword="null"/>
+    /// and the empty string are kept so a UI can still tell "not set" apart. Non-string secrets echoed
+    /// back as the mask are restored by <see cref="ConfigurationManager.UpdateSectionAsync"/> before the
+    /// JSON is deserialized.
+    /// </summary>
+    private static object? MaskScalar(object? value) => value switch
+    {
+        null => null,
+        string { Length: 0 } => value,
+        _ => ConfigField.SecretMask
+    };
 
     /// <summary>
-    /// Copies a list of primitives with every non-empty string entry replaced by
+    /// Copies a list of primitives with every set entry replaced by
     /// <see cref="ConfigField.SecretMask"/>. Clients echo the masked entries back and
     /// <see cref="ConfigurationManager.UpdateSectionAsync"/> restores them by position.
     /// </summary>
@@ -218,9 +227,12 @@ internal static class ConfigSchemaBuilder
         object? currentValue,
         object? defaultValue,
         string? group,
-        bool groupCollapsed)
+        bool groupCollapsed,
+        bool includeSecrets)
     {
         var names = Enum.GetNames(enumType);
+        var isSecret = attr?.Secret ?? false;
+        var mask = isSecret && !includeSecrets;
         return new ConfigField
         {
             Path = path,
@@ -229,17 +241,28 @@ internal static class ConfigSchemaBuilder
             InputType = ConfigInputType.Select,
             TypeHint = $"enum:{string.Join(',', names)}",
             Required = attr?.Required ?? false,
+            Secret = isSecret,
             RequiresRestart = attr?.RequiresRestart ?? false,
-            AllowedValues = names,
+            AllowedValues = mask ? null : names,
             Group = group,
             GroupCollapsed = groupCollapsed,
             Order = attr?.Order ?? 0,
-            DefaultValue = defaultValue?.ToString(),
-            CurrentValue = currentValue?.ToString()
+            DefaultValue = mask ? MaskScalar(defaultValue) : defaultValue?.ToString(),
+            CurrentValue = mask ? MaskScalar(currentValue) : currentValue?.ToString()
         };
     }
 
-    private static bool IsPrimitiveLike(Type t)
+    /// <summary>
+    /// True for a scalar property that is not a <c>string</c>: numbers, <c>bool</c>, <c>Guid</c>, <c>DateTime</c>
+    /// and enums. A masked secret of such a type cannot be deserialized as-is, so it is restored on the JSON.
+    /// </summary>
+    internal static bool IsNonStringScalar(Type t)
+    {
+        var under = Nullable.GetUnderlyingType(t) ?? t;
+        return under != typeof(string) && (IsPrimitiveLike(under) || under.IsEnum);
+    }
+
+    internal static bool IsPrimitiveLike(Type t)
     {
         var under = Nullable.GetUnderlyingType(t) ?? t;
         return under.IsPrimitive
@@ -270,7 +293,7 @@ internal static class ConfigSchemaBuilder
         return true;
     }
 
-    private static bool IsListOfPrimitive(Type t)
+    internal static bool IsListOfPrimitive(Type t)
     {
         if (!t.IsGenericType) return false;
         var def = t.GetGenericTypeDefinition();

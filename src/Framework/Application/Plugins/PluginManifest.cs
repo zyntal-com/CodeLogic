@@ -36,7 +36,7 @@ public sealed class PluginManifest
     public string? Author { get; init; }
 
     /// <summary>
-    /// Minimum CodeLogic framework version required to run this plugin (e.g., "3.0.0").
+    /// Minimum CodeLogic framework version required to run this plugin (e.g., "5.0.0").
     /// When set, the PluginManager may validate this against the running framework version.
     /// Currently informational — enforcement is the plugin author's responsibility.
     /// </summary>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 
 namespace CodeLogic;
 
@@ -19,6 +20,25 @@ public static class CodeLogicEnvironment
     /// during InitializeAsync. Defaults to "0.0.0".
     /// </summary>
     public static string AppVersion { get; internal set; } = "0.0.0";
+
+    /// <summary>
+    /// The version of the CodeLogic framework assembly, from its informational version without the
+    /// <c>+commit</c> build metadata (e.g. <c>5.0.42</c> or <c>5.0.42-preview</c>). Falls back to the
+    /// assembly version when the attribute is missing.
+    /// </summary>
+    public static string FrameworkVersion { get; } = ReadFrameworkVersion();
+
+    private static string ReadFrameworkVersion()
+    {
+        var assembly = typeof(CodeLogicEnvironment).Assembly;
+        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+');
+            return plus >= 0 ? informational[..plus] : informational;
+        }
+        return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
 
     /// <summary>
     /// Returns true if a debugger is currently attached to this process.

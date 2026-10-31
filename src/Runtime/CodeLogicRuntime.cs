@@ -40,6 +40,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     private System.Threading.Timer? _healthTimer;
     private bool _initialized;
     private bool _shutdownRegistered;
+    private ConsoleCancelEventHandler? _cancelKeyHandler;
+    private EventHandler? _processExitHandler;
 
     /// <summary>
     /// Initializes the CodeLogic runtime, loading configuration, discovering libraries, and preparing the framework.
@@ -65,13 +67,13 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
 
             if (cli.ShowVersion)
             {
-                Console.WriteLine($"CodeLogic 3.0.0 | App {_options.AppVersion}");
+                Console.WriteLine($"CodeLogic {CodeLogicEnvironment.FrameworkVersion} | App {_options.AppVersion}");
                 return InitializationResult.Exit("--version");
             }
 
             if (cli.ShowInfo)
             {
-                Console.WriteLine("CodeLogic 3.0.0");
+                Console.WriteLine($"CodeLogic {CodeLogicEnvironment.FrameworkVersion}");
                 Console.WriteLine($"  App version  : {_options.AppVersion}");
                 Console.WriteLine($"  Machine      : {Environment.MachineName}");
                 Console.WriteLine($"  Framework    : {_options.GetFrameworkPath()}");
@@ -127,19 +129,21 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             if (_options.HandleShutdownSignals && !_shutdownRegistered)
             {
                 _shutdownRegistered = true;
-                Console.CancelKeyPress += (_, e) =>
+                _cancelKeyHandler = (_, e) =>
                 {
                     e.Cancel = true;
                     _eventBus.Publish(new ShutdownRequestedEvent("CTRL+C"));
                     _ = StopAsync();
                 };
-                AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+                _processExitHandler = (_, _) =>
                 {
                     _eventBus.Publish(new ShutdownRequestedEvent("ProcessExit"));
                     // Deliberately blocking: the process terminates as soon as a ProcessExit
                     // handler returns, so an un-awaited StopAsync would never finish.
                     StopAsync().GetAwaiter().GetResult();
                 };
+                Console.CancelKeyPress += _cancelKeyHandler;
+                AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
             }
 
             return InitializationResult.Succeeded(runHealthCheck: cli.ShowHealth);
@@ -365,6 +369,11 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     /// <summary>
     /// Resets the runtime to its pre-initialized state, stopping everything and clearing all references.
     /// </summary>
+    /// <remarks>
+    /// Also removes the CTRL+C / process-exit handlers registered by <see cref="InitializeAsync"/> (the
+    /// next initialization registers them again if <see cref="CodeLogicOptions.HandleShutdownSignals"/> is
+    /// set), drops every event bus subscription, and detaches the framework logger.
+    /// </remarks>
     public async Task ResetAsync()
     {
         await _lock.WaitAsync();
@@ -390,6 +399,12 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 _libraryManager.Dispose();
             }
 
+            UnregisterShutdownHandlers();
+            // Subscriptions belong to the libraries, application and plugins that were just stopped;
+            // a re-initialized runtime must not deliver events to them.
+            _eventBus.Clear();
+            _frameworkLogger = NullLogger.Instance;
+
             _options = null;
             _config = null;
             _startupParameters = null;
@@ -402,6 +417,27 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
         {
             _lock.Release();
         }
+    }
+
+    /// <summary>True while the CTRL+C / process-exit handlers are registered (for tests).</summary>
+    internal bool ShutdownHandlersRegistered => _shutdownRegistered;
+
+    /// <summary>The framework logger (for tests).</summary>
+    internal ILogger FrameworkLogger => _frameworkLogger;
+
+    private void UnregisterShutdownHandlers()
+    {
+        if (_cancelKeyHandler is not null)
+        {
+            try { Console.CancelKeyPress -= _cancelKeyHandler; } catch { /* no console */ }
+            _cancelKeyHandler = null;
+        }
+        if (_processExitHandler is not null)
+        {
+            AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
+            _processExitHandler = null;
+        }
+        _shutdownRegistered = false;
     }
 
     /// <summary>
