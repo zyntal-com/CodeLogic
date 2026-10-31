@@ -188,7 +188,7 @@ await context.Configuration.ReloadAsync<DatabaseConfig>();
 var updated = context.Configuration.Get<DatabaseConfig>(); // reload replaces the instance
 ```
 
-Libraries can apply changes live, per instance, by implementing `IConfigReloadable` and using `ConfigDiff.Keyed` on the old/new values — e.g. reconnect only the one database whose settings changed. File watching is opt-in via `libraries.configHotReload` in `CodeLogic.json`. See [Core › Configuration](../Core/configuration.md#live-reload-for-libraries-490) for the full pattern.
+Libraries can apply changes live, per instance, by implementing `IConfigReloadable` and using `ConfigDiff.Keyed` on the old/new values — e.g. reconnect only the one database whose settings changed. File watching is opt-in via `libraries.configHotReload` in `CodeLogic.json`. See [Core › Configuration](https://github.com/zyntal-com/CodeLogic/blob/main/docs/Core/configuration.md#live-reload-for-libraries) for the full pattern.
 
 ---
 
