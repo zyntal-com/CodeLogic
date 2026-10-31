@@ -28,12 +28,12 @@
     ],
     "dest": "../docs-output",
     "globalMetadata": {
-      "_appTitle": "CodeLogic 4",
+      "_appTitle": "CodeLogic 5",
       "_appLogoPath": "images/logo.svg",
       "_appFaviconPath": "images/favicon.ico",
       "_enableSearch": true,
       "_appFooter": "Copyright &copy; 2026 Zyntal.com. Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
-      "_appName": "CodeLogic 4"
+      "_appName": "CodeLogic 5"
     },
     "template": ["default", "modern"],
     "sitemap": {

@@ -57,4 +57,4 @@ Configuration files, CLI arguments, and runtime environment.
 | [CodeLogic.json Reference](Reference/codelogic-json.md) | Complete reference for `CodeLogic.json` and `CodeLogic.Development.json` — every section and property with defaults and examples. |
 | [Environment](Reference/environment.md) | `CodeLogicEnvironment` properties, `IsDevelopment` detection logic, `IsDebugging`, and `AppVersion` lifecycle. |
 | [Health Checks](Reference/health-checks.md) | `HealthStatus`, `HealthReport`, `ToJson()`, `ToConsoleString()`, scheduled checks, the `--health` CLI flag, and implementing `HealthCheckAsync`. |
-| [Versioning](Reference/versioning.md) | The shared `4.9.<patch>` version line, `version.txt`, CI-composed patch numbers, assembly binding identity, and the prerelease/release branch flow. |
+| [Versioning](Reference/versioning.md) | The shared `5.0.<patch>` version line (4.9 for the .NET 10 maintenance line), `version.txt`, CI-composed patch numbers, assembly binding identity, and the prerelease/release branch flow. |
