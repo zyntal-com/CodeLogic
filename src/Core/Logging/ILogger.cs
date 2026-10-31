@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Runtime.CompilerServices;
+
 namespace CodeLogic.Core.Logging;
 
 /// <summary>
@@ -52,33 +55,86 @@ public interface ILogger
     /// <param name="exception">Optional exception to include in the log entry.</param>
     void Critical(string message, Exception? exception = null);
 
-    // Convenience overloads with structured data
+    /// <summary>
+    /// True when a message at <paramref name="level"/> would be written anywhere. Lets callers skip
+    /// building expensive messages; the interpolated-string overloads already check it for you.
+    /// </summary>
+    /// <param name="level">The level to test.</param>
+    /// <returns>True by default; loggers that filter by level override it.</returns>
+    bool IsEnabled(LogLevel level) => true;
+
+    // ── Interpolated strings ─────────────────────────────────────────────────────────────
+    // logger.Debug($"user {id} took {ms} ms") binds to these overloads. When the level is disabled
+    // the interpolation holes are not evaluated and nothing is allocated.
+
+    /// <summary>Logs a trace message built from an interpolated string, only if Trace is enabled.</summary>
+    /// <param name="message">The interpolated message.</param>
+    void Trace([InterpolatedStringHandlerArgument("")] ref LogTraceInterpolatedStringHandler message)
+    {
+        if (message.IsEnabled) Trace(message.ToStringAndClear());
+    }
+
+    /// <summary>Logs a debug message built from an interpolated string, only if Debug is enabled.</summary>
+    /// <param name="message">The interpolated message.</param>
+    void Debug([InterpolatedStringHandlerArgument("")] ref LogDebugInterpolatedStringHandler message)
+    {
+        if (message.IsEnabled) Debug(message.ToStringAndClear());
+    }
+
+    /// <summary>Logs an informational message built from an interpolated string, only if Info is enabled.</summary>
+    /// <param name="message">The interpolated message.</param>
+    void Info([InterpolatedStringHandlerArgument("")] ref LogInfoInterpolatedStringHandler message)
+    {
+        if (message.IsEnabled) Info(message.ToStringAndClear());
+    }
+
+    /// <summary>Logs a warning built from an interpolated string, only if Warning is enabled.</summary>
+    /// <param name="message">The interpolated message.</param>
+    void Warning([InterpolatedStringHandlerArgument("")] ref LogWarningInterpolatedStringHandler message)
+    {
+        if (message.IsEnabled) Warning(message.ToStringAndClear());
+    }
+
+    // ── Composite format strings ─────────────────────────────────────────────────────────
+    // params ReadOnlySpan: no argument array is allocated, and nothing is formatted when the level is off.
 
     /// <summary>
-    /// Logs a formatted debug message using <see cref="string.Format(string, object?[])"/>.
+    /// Logs a formatted debug message using <see cref="string.Format(IFormatProvider, string, ReadOnlySpan{object})"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Debug(string message, params object?[] args) => Debug(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
+    void Debug(string message, params ReadOnlySpan<object?> args)
+    {
+        if (IsEnabled(LogLevel.Debug)) Debug(string.Format(CultureInfo.CurrentCulture, message, args));
+    }
 
     /// <summary>
-    /// Logs a formatted informational message using <see cref="string.Format(string, object?[])"/>.
+    /// Logs a formatted informational message using <see cref="string.Format(IFormatProvider, string, ReadOnlySpan{object})"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Info(string message, params object?[] args) => Info(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
+    void Info(string message, params ReadOnlySpan<object?> args)
+    {
+        if (IsEnabled(LogLevel.Info)) Info(string.Format(CultureInfo.CurrentCulture, message, args));
+    }
 
     /// <summary>
-    /// Logs a formatted warning message using <see cref="string.Format(string, object?[])"/>.
+    /// Logs a formatted warning message using <see cref="string.Format(IFormatProvider, string, ReadOnlySpan{object})"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Warning(string message, params object?[] args) => Warning(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
+    void Warning(string message, params ReadOnlySpan<object?> args)
+    {
+        if (IsEnabled(LogLevel.Warning)) Warning(string.Format(CultureInfo.CurrentCulture, message, args));
+    }
 
     /// <summary>
-    /// Logs a formatted error message using <see cref="string.Format(string, object?[])"/>.
+    /// Logs a formatted error message using <see cref="string.Format(IFormatProvider, string, ReadOnlySpan{object})"/>.
     /// </summary>
     /// <param name="message">A composite format string.</param>
     /// <param name="args">Arguments to substitute into the format string.</param>
-    void Error(string message, params object?[] args) => Error(string.Format(System.Globalization.CultureInfo.CurrentCulture, message, args));
+    void Error(string message, params ReadOnlySpan<object?> args)
+    {
+        if (IsEnabled(LogLevel.Error)) Error(string.Format(CultureInfo.CurrentCulture, message, args));
+    }
 }

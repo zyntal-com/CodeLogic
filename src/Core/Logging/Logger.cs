@@ -10,7 +10,7 @@ public sealed class Logger : ILogger
     private readonly string _componentLogsPath;
     private readonly LogLevel _minimumLevel;
     private readonly LoggingOptions _options;
-    private readonly Lock _lock = new();           // per-instance, not static
+    private readonly string _singleFileName;
 
     /// <summary>Initializes a new logger for the specified component.</summary>
     public Logger(
@@ -23,6 +23,7 @@ public sealed class Logger : ILogger
         _componentLogsPath = componentLogsPath;
         _minimumLevel = minimumLevel;
         _options = options;
+        _singleFileName = componentName.ToLowerInvariant() + ".log";
         Directory.CreateDirectory(_componentLogsPath);
     }
 
@@ -39,147 +40,104 @@ public sealed class Logger : ILogger
     /// <inheritdoc />
     public void Critical(string message, Exception? exception = null) => Log(LogLevel.Critical, message, exception);
 
+    /// <summary>
+    /// True when a message at <paramref name="level"/> reaches at least one destination: the component
+    /// log, the centralized debug log or the console. Disabled levels cost (almost) nothing to call.
+    /// </summary>
+    public bool IsEnabled(LogLevel level) =>
+        level >= _minimumLevel || CentralizedLogEnabled || ConsoleEnabled(level);
+
+    /// <summary>
+    /// Completes once every log line written so far has reached disk. Lines are written by a background
+    /// writer; the runtime flushes on stop and process exit, so call this only from hosts that need a
+    /// point where everything is on disk (tests, tools, custom shutdown).
+    /// </summary>
+    public static Task FlushAsync() => LogFileWriter.Shared.FlushAsync();
+
+    private bool CentralizedLogEnabled =>
+        _options.EnableDebugMode && _options.CentralizedDebugLog && !string.IsNullOrWhiteSpace(_options.CentralizedLogsPath);
+
+    private bool ConsoleEnabled(LogLevel level) =>
+        _options.EnableConsoleOutput && level >= _options.ConsoleMinimumLevel;
+
     private void Log(LogLevel level, string message, Exception? exception = null)
     {
+        var toFile = level >= _minimumLevel;
+        var toCentral = CentralizedLogEnabled;
+        var toConsole = ConsoleEnabled(level);
+        if (!toFile && !toCentral && !toConsole)
+            return; // nothing to do: skip all formatting
+
         var timestamp = DateTime.Now.ToString(_options.TimestampFormat, CultureInfo.InvariantCulture);
         var prefix = BuildPrefix(timestamp, level);
-        var entry = BuildEntry(prefix, message, exception);
 
         // Component log file
-        if (level >= _minimumLevel)
-        {
-            var filePath = ResolveFilePath(level);
-            WriteToFile(filePath, entry);
-        }
+        if (toFile)
+            WriteToFile(ResolveFilePath(level), BuildEntry(prefix, message, exception));
 
-        // Centralized debug log
-        if (_options.EnableDebugMode && _options.CentralizedDebugLog
-            && !string.IsNullOrWhiteSpace(_options.CentralizedLogsPath))
-        {
-            var centralFile = ResolveCentralizedFilePath();
-            // Centralized log always includes component name
-            var centralEntry = BuildEntry($"[{_componentName}] {prefix}", message, exception);
-            WriteToFile(centralFile, centralEntry);
-        }
+        // Centralized debug log (always includes the component name)
+        if (toCentral)
+            WriteToFile(ResolveCentralizedFilePath(), BuildEntry($"[{_componentName}] {prefix}", message, exception));
 
         // Console output
-        if (_options.EnableConsoleOutput && level >= _options.ConsoleMinimumLevel)
-        {
+        if (toConsole)
             WriteToConsole(level, prefix, message, exception);
-        }
     }
 
     private string BuildPrefix(string timestamp, LogLevel level)
     {
-        var levelStr = level.ToString().ToUpperInvariant();
+        var levelStr = LevelName(level);
         return _options.IncludeMachineName
             ? $"[{_componentName}][{Environment.MachineName}] {timestamp} [{levelStr}]"
             : $"[{_componentName}] {timestamp} [{levelStr}]";
     }
 
-    private static string BuildEntry(string prefix, string message, Exception? exception)
+    private static string LevelName(LogLevel level) => level switch
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append(prefix).Append(' ').Append(message);
-        if (exception != null)
-            sb.AppendLine().Append(exception);
-        return sb.ToString();
-    }
+        LogLevel.Trace => "TRACE",
+        LogLevel.Debug => "DEBUG",
+        LogLevel.Info => "INFO",
+        LogLevel.Warning => "WARNING",
+        LogLevel.Error => "ERROR",
+        LogLevel.Critical => "CRITICAL",
+        _ => level.ToString().ToUpperInvariant(),
+    };
+
+    private static string BuildEntry(string prefix, string message, Exception? exception) =>
+        exception is null ? $"{prefix} {message}" : $"{prefix} {message}{Environment.NewLine}{exception}";
 
     private string ResolveFilePath(LogLevel level)
     {
         if (_options.Mode == LoggingMode.SingleFile)
         {
-            // component.log — rolling handled in WriteToFile
-            return Path.Combine(_componentLogsPath, $"{_componentName.ToLowerInvariant()}.log");
+            // component.log — size-based rolling is done by the background writer
+            return Path.Combine(_componentLogsPath, _singleFileName);
         }
-        else
-        {
-            // Date folder pattern
-            var now = DateTime.Now;
-            var pattern = _options.FileNamePattern;
-            var relative = pattern
-                .Replace("{date:yyyy}", now.ToString("yyyy", CultureInfo.InvariantCulture))
-                .Replace("{date:MM}",   now.ToString("MM", CultureInfo.InvariantCulture))
-                .Replace("{date:dd}",   now.ToString("dd", CultureInfo.InvariantCulture))
-                .Replace("{level}",     level.ToString().ToLowerInvariant());
 
-            var fileName  = Path.GetFileName(relative);
-            var directory = Path.GetDirectoryName(relative) ?? string.Empty;
-            var fullDir   = Path.Combine(_componentLogsPath, directory);
-            Directory.CreateDirectory(fullDir);
-            return Path.Combine(fullDir, fileName);
-        }
+        // Date folder pattern. The background writer creates the directory once.
+        var now = DateTime.Now;
+        var relative = _options.FileNamePattern
+            .Replace("{date:yyyy}", now.ToString("yyyy", CultureInfo.InvariantCulture))
+            .Replace("{date:MM}",   now.ToString("MM", CultureInfo.InvariantCulture))
+            .Replace("{date:dd}",   now.ToString("dd", CultureInfo.InvariantCulture))
+            .Replace("{level}",     LevelName(level).ToLowerInvariant());
+        return Path.Combine(_componentLogsPath, relative);
     }
 
     private string ResolveCentralizedFilePath()
     {
-        var dir = Path.Combine(_options.CentralizedLogsPath!,
-            DateTime.Now.ToString("yyyy", CultureInfo.InvariantCulture), DateTime.Now.ToString("MM", CultureInfo.InvariantCulture), DateTime.Now.ToString("dd", CultureInfo.InvariantCulture));
-        Directory.CreateDirectory(dir);
-        return Path.Combine(dir, "debug_all.log");
+        var now = DateTime.Now;
+        return Path.Combine(_options.CentralizedLogsPath!,
+            now.ToString("yyyy", CultureInfo.InvariantCulture),
+            now.ToString("MM", CultureInfo.InvariantCulture),
+            now.ToString("dd", CultureInfo.InvariantCulture),
+            "debug_all.log");
     }
 
-    private void WriteToFile(string filePath, string content)
-    {
-        lock (_lock)
-        {
-            try
-            {
-                // SingleFile: check size and roll if needed
-                if (_options.Mode == LoggingMode.SingleFile && File.Exists(filePath))
-                {
-                    var info = new FileInfo(filePath);
-                    if (info.Length >= _options.MaxFileSizeMb * 1024L * 1024L)
-                    {
-                        RollFiles(filePath);
-                    }
-                }
-
-                File.AppendAllText(filePath, content + Environment.NewLine);
-            }
-            catch (Exception ex)
-            {
-                // Logging must never crash the app — fallback to Console.Error
-                try
-                {
-                    Console.Error.WriteLine($"[CodeLogic.Logger] Failed to write to {filePath}: {ex.Message}");
-                    Console.Error.WriteLine(content);
-                }
-                catch { /* if Console.Error also fails, give up silently */ }
-            }
-        }
-    }
-
-    private void RollFiles(string activeFilePath)
-    {
-        // Delete the oldest file if at limit
-        var oldest = GetRolledFilePath(activeFilePath, _options.MaxRolledFiles);
-        if (File.Exists(oldest))
-            File.Delete(oldest);
-
-        // Shift: component.N.log → component.(N+1).log
-        for (int i = _options.MaxRolledFiles - 1; i >= 1; i--)
-        {
-            var src  = GetRolledFilePath(activeFilePath, i);
-            var dest = GetRolledFilePath(activeFilePath, i + 1);
-            if (File.Exists(src))
-                File.Move(src, dest, overwrite: true);
-        }
-
-        // component.log → component.1.log
-        var rolled = GetRolledFilePath(activeFilePath, 1);
-        File.Move(activeFilePath, rolled, overwrite: true);
-    }
-
-    private static string GetRolledFilePath(string activeFilePath, int index)
-    {
-        // component.log → component.1.log
-        var dir  = Path.GetDirectoryName(activeFilePath)!;
-        var name = Path.GetFileNameWithoutExtension(activeFilePath);
-        var ext  = Path.GetExtension(activeFilePath);
-        return Path.Combine(dir, $"{name}.{index}{ext}");
-    }
+    private void WriteToFile(string filePath, string content) =>
+        LogFileWriter.Shared.Enqueue(filePath, content,
+            rollAtBytes: _options.Mode == LoggingMode.SingleFile ? _options.MaxFileSizeMb * 1024L * 1024L : 0,
+            maxRolledFiles: _options.MaxRolledFiles);
 
     private void WriteToConsole(LogLevel level, string prefix, string message, Exception? exception)
     {
