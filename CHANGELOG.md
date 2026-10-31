@@ -22,6 +22,19 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   `FrameworkEvent` receives all of them.
 - Log timestamps, date folders and upper-cased library/plugin IDs use the invariant culture.
   This fixes Buddhist-calendar log paths on th-TH and Turkish-I casing.
+- **Plugin dependency resolution is isolated.** `PluginLoadContext` no longer hands a plugin any
+  already-loaded assembly with a matching simple name (which could be another plugin's copy).
+  `CodeLogic` always resolves to the host; other dependencies resolve from the plugin's own
+  `.deps.json`/folder first, then from the host. Assemblies whose types cross the host/plugin
+  boundary must now be listed in the new `PluginOptions.SharedAssemblies` if the plugin ships its own
+  copy. `PluginLoadContext`'s constructor takes an optional `sharedAssemblies` argument (recompile).
+- **Loading a plugin whose ID is already loaded throws** `InvalidOperationException` instead of
+  silently replacing the running instance. Use `ReloadPluginAsync`.
+- **`ResetAsync` disposes the plugin manager registered with `SetPluginManager`** and clears the
+  registration. Create a new manager after a reset. Using a disposed manager throws
+  `ObjectDisposedException`.
+- `PluginManager.RegisterInProcessPluginAsync` is now truly asynchronous, and `GetAllPlugins` /
+  `GetLoadedPlugins` return snapshots instead of live views.
 
 ### Added
 
@@ -41,6 +54,41 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   instances are cached.
 - `src` builds with `AnalysisLevel=latest-recommended`.
 - `global.json` pins the .NET 11 SDK, and CI installs it from there.
+
+### Fixed
+
+- **Plugin lifecycle is serialized.** Load, register, unload, reload, dispose and hot reload run one at
+  a time; readers and health checks work on snapshots, so hot reload can no longer corrupt the plugin
+  table or throw "collection was modified". Calling lifecycle methods from inside a plugin's own
+  callback throws instead of deadlocking.
+- **Plugin failures clean up.** A failed load disposes the instance (after `OnUnloadAsync` when
+  `OnStartAsync` was entered) and unloads its load context. A throwing `OnUnloadAsync` no longer skips
+  `Dispose`, context unload and removal. Exceptions from `OnPluginLoaded`/`OnPluginUnloaded` handlers
+  are no longer reported as plugin failures.
+- **Default config generation is serialized with saves and loads**, and atomic writes use a unique
+  temp file, so concurrent generate/load/save can no longer collide on `config.json.tmp` or overwrite
+  a competing save with defaults.
+- **Log directories recover.** A failed directory creation is no longer cached, and a log folder
+  deleted while the process runs is recreated on the next line.
+- **Log paths compare case-sensitively on Linux** (case-insensitively on Windows and macOS), so
+  `App.log` and `app.log` no longer share one writer there.
+- **Idle log files are closed even when nothing else is logged**; previously the idle check only ran
+  after new entries arrived.
+- **Secret masking covers defaults and string lists.** `GetSchema` masks the default value of secret
+  string fields and every entry of secret `List<string>` fields. Echoed masks in such lists are
+  restored by position; an update that changes the list length while entries are still masked is
+  rejected instead of saving the mask.
+- `release.yml` checks out the commit that triggered the run (`github.sha`) instead of the branch
+  head, so the packed commit is always the verified, tagged one.
+
+### Documentation
+
+- Plugin docs and README examples use the real API (`LoadPluginAsync`/`UnloadPluginAsync`/
+  `ReloadPluginAsync`, the actual `PluginManager` constructor, `PluginState` values and manifest
+  members), and the isolation section describes what the load context does and does not isolate.
+- The Core, Framework and Reference guides and the in-depth getting-started page are now part of the
+  docs site.
+- The web demo's config endpoints carry authentication/authorization guidance.
 
 ### Performance
 

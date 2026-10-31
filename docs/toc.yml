@@ -5,6 +5,15 @@
 - name: Articles
   href: articles/
   homepage: articles/getting-started.md
+- name: Core
+  href: Core/
+  homepage: Core/logging.md
+- name: Framework
+  href: Framework/
+  homepage: Framework/libraries.md
+- name: Reference
+  href: Reference/
+  homepage: Reference/codelogic-json.md
 - name: API Reference
   href: api/
   homepage: api/index.md

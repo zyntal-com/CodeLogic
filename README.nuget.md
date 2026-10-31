@@ -134,7 +134,7 @@ CodeLogic/
 
 **Static facade, injectable runtime.** The `CodeLogic` static class is a convenience facade. For testing or advanced scenarios, inject `ICodeLogicRuntime` via DI.
 
-**Plugins are first-class.** Same lifecycle, same access to config/logging/localization, hot-loadable at runtime via `AssemblyLoadContext` isolation.
+**Plugins are first-class.** Same lifecycle, same access to config/logging/localization, hot-loadable at runtime, each in its own collectible `AssemblyLoadContext`.
 
 ## Building a Library
 
@@ -200,26 +200,35 @@ public class MyApplication : IApplication
 Plugins are hot-loadable at runtime — no restart required:
 
 ```csharp
-public class MyPlugin : IPlugin
+public sealed class MyPlugin : IPlugin
 {
-    public string Id => "my.plugin";
-    public string Name => "My Plugin";
-    public string Version => "1.0.0";
-    public string? Description => "Does something cool";
-    public string? Author => "You";
-    public bool IsLoaded { get; private set; }
-
-    public async Task OnLoadAsync(PluginContext context)
+    public PluginManifest Manifest { get; } = new()
     {
-        var config = context.Configuration.Get<MyPluginConfig>();
-        IsLoaded = true;
+        Id = "my.plugin", Name = "My Plugin", Version = "1.0.0",
+        Description = "Does something cool", Author = "You"
+    };
+    public PluginState State { get; private set; } = PluginState.Loaded;
+
+    public Task OnConfigureAsync(PluginContext context)
+    {
+        context.Configuration.Register<MyPluginConfig>();
+        return Task.CompletedTask;
     }
 
-    public Task OnUnloadAsync() { IsLoaded = false; return Task.CompletedTask; }
+    public Task OnInitializeAsync(PluginContext context)
+    {
+        var config = context.Configuration.Get<MyPluginConfig>();
+        return Task.CompletedTask;
+    }
+
+    public Task OnStartAsync(PluginContext context) { State = PluginState.Started; return Task.CompletedTask; }
+    public Task OnUnloadAsync() { State = PluginState.Stopped; return Task.CompletedTask; }
     public Task<HealthStatus> HealthCheckAsync() => Task.FromResult(HealthStatus.Healthy("OK"));
     public void Dispose() { }
 }
 ```
+
+Load it with `pluginManager.LoadPluginAsync(pathToDll)`; see [Plugins](https://zyntal-com.github.io/CodeLogic/articles/plugins.html).
 
 ## Official Library Packages
 
