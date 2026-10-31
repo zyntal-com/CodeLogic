@@ -36,6 +36,21 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - `src` builds with `AnalysisLevel=latest-recommended`.
 - `global.json` pins the .NET 11 SDK, and CI installs it from there.
 
+### Performance
+
+Measured with `benchmarks/CodeLogic.Benchmarks` against 5.0.28-preview.
+
+- **Log calls no longer touch the disk.** Lines go to one background writer per process, which keeps
+  files open, writes them in order and flushes when the queue is empty. An `Info` line costs about
+  0.6 µs instead of about 130 µs. `StopAsync`, process exit and an unhandled exception flush pending
+  lines; `Logger.FlushAsync()` is available to hosts.
+- **Disabled log levels are almost free.** New interpolated-string overloads skip evaluating the holes
+  when the level is off (8 ns and 0 B instead of 460 ns and 1 KB). New `ILogger.IsEnabled(LogLevel)`.
+  The format overloads take `params ReadOnlySpan<object?>` and don't format when the level is off.
+- **`EventBus.Publish` takes no lock and allocates nothing.** Subscribers live in a copy-on-write
+  snapshot; a publish sees the subscribers that existed when it started. 8 ns instead of 29 ns for
+  one subscriber.
+
 ## 4.9.x
 
 ### Added

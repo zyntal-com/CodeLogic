@@ -48,6 +48,42 @@ public Task OnInitializeAsync(LibraryContext context)
 
 The format overloads use `string.Format` internally — use `{0}`, `{1}`, etc.
 
+### Cost of a log call (5.0)
+
+Disabled levels are close to free, so leave Debug and Trace calls in hot code:
+
+| Call | Level disabled | Level enabled |
+|------|----------------|---------------|
+| `logger.Debug($"user {id} took {ms} ms")` | ~8 ns, no allocation. The holes are **not evaluated**. | The message is built and queued. |
+| `logger.Debug("user {0} took {1} ms", id, ms)` | ~6 ns. No argument array (`params ReadOnlySpan<object?>`); value-type arguments are still boxed. | `string.Format`, then queued. |
+| `logger.Debug("constant text")` | A level check. | Queued. |
+
+Interpolated strings bind to handler overloads (`LogDebugInterpolatedStringHandler`, …) that ask
+`ILogger.IsEnabled(level)` first. Use `IsEnabled` yourself when building a message needs more than an
+interpolated string:
+
+```csharp
+if (logger.IsEnabled(LogLevel.Debug))
+    logger.Debug(DescribeQueryPlan(query));
+```
+
+Custom `ILogger` implementations get `IsEnabled` (returning `true`) and the new overloads as default
+interface members, so they keep compiling; override `IsEnabled` to get the savings.
+
+### Background writing and flushing
+
+Log calls never touch the disk. They queue the line for one background writer per process, which keeps
+each log file open, writes lines in order and flushes as soon as the queue is empty. An `Info` line costs
+well under a microsecond instead of an open/append/close of the file.
+
+- The queue is bounded (10 000 lines). If the disk cannot keep up, callers wait rather than lines being
+  dropped or memory growing.
+- Files are opened with `FileShare.ReadWrite | FileShare.Delete`, so log viewers and `tail` keep working.
+  Files not written to for two minutes are closed.
+- `CodeLogic.StopAsync()` flushes before it returns. Pending lines are also flushed on process exit and on
+  an unhandled exception.
+- Hosts that need everything on disk at a specific point (tests, tools) call `await Logger.FlushAsync()`.
+
 ---
 
 ## LogLevel Enum

@@ -357,6 +357,9 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
         {
             _lock.Release();
         }
+
+        // Log lines are written by a background writer; make sure everything is on disk.
+        await Logger.FlushAsync().ConfigureAwait(false);
     }
 
     /// <summary>
