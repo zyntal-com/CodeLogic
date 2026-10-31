@@ -17,18 +17,32 @@ namespace CodeLogic.Demo.Web.Endpoints;
 //   curl -X PUT localhost:5000/config/CL.DemoEndpoints/endpoints -H "Content-Type: application/json" \
 //        -d '{"endpoints":{"Orders":{"url":"https://orders.local"},"Billing":{"url":"https://billing-v2.local"},"Search":{"url":"https://search.local"}}}'
 // Only "Billing" reconnects (see the console output); Orders and Search stay connected.
+//
+// SECURITY: these endpoints are deliberately unauthenticated so the demo runs with one command.
+// Do not copy them into a deployed application as they are. They let any caller read every
+// library's configuration (secrets are masked, everything else is not), overwrite it on disk and
+// apply it live. In a real application:
+//   - require an authenticated administrator on the whole group, e.g.
+//       var config = app.MapGroup("/config").RequireAuthorization("ConfigAdmin");
+//     with builder.Services.AddAuthentication(...) / AddAuthorization(o => o.AddPolicy("ConfigAdmin", ...)),
+//   - pass the authenticated user as changedBy (it is recorded on ConfigChangedEvent),
+//   - protect the PUT/POST routes against CSRF if the admin UI uses cookie authentication,
+//   - never call GetConfigSchema with includeSecrets: true from a request handler.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public static class ConfigEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
+        // Demo only: add .RequireAuthorization("ConfigAdmin") here in a real application (see above).
+        var config = app.MapGroup("/config");
+
         // GET /config — list all sections
-        app.MapGet("/config", () => Results.Ok(Libraries.AllConfigSections()))
+        config.MapGet("", () => Results.Ok(Libraries.AllConfigSections()))
             .WithName("ListConfigSections");
 
         // GET /config/{libraryId}/{section} — schema + current values
-        app.MapGet("/config/{libraryId}/{section}", (string libraryId, string section) =>
+        config.MapGet("/{libraryId}/{section}", (string libraryId, string section) =>
         {
             var schema = Libraries.GetConfigSchema(libraryId, SectionName(section));
             return schema is null ? Results.NotFound() : Results.Ok(schema);
@@ -36,7 +50,7 @@ public static class ConfigEndpoints
         .WithName("GetConfigSection");
 
         // PUT /config/{libraryId}/{section} — validate, save, and apply live
-        app.MapPut("/config/{libraryId}/{section}", async (string libraryId, string section, HttpRequest request) =>
+        config.MapPut("/{libraryId}/{section}", async (string libraryId, string section, HttpRequest request) =>
         {
             using var reader = new StreamReader(request.Body);
             var json = await reader.ReadToEndAsync();
@@ -48,7 +62,7 @@ public static class ConfigEndpoints
         .WithName("UpdateConfigSection");
 
         // POST /config/{libraryId}/{section}/reload — pick up a hand-edited file
-        app.MapPost("/config/{libraryId}/{section}/reload", async (string libraryId, string section, HttpContext http) =>
+        config.MapPost("/{libraryId}/{section}/reload", async (string libraryId, string section, HttpContext http) =>
         {
             var result = await Libraries.ReloadConfigAsync(
                 libraryId, SectionName(section), changedBy: "web-demo", http.RequestAborted);

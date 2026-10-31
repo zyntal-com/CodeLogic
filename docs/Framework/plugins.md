@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins are hot-loadable, isolated components managed by the consuming application. Unlike libraries, plugins are loaded into separate `AssemblyLoadContext` instances and can be unloaded and reloaded at runtime without restarting the host process.
+Plugins are hot-loadable components managed by the consuming application. Unlike libraries, plugins are loaded into separate collectible `AssemblyLoadContext` instances and can be unloaded and reloaded at runtime without restarting the host process. That isolates assembly resolution, not execution: see [Isolation](#isolation).
 
 ---
 
@@ -208,11 +208,25 @@ The standard case — plugin lives in its own directory as a `.dll`:
 await pluginManager.LoadPluginAsync("CodeLogic/Plugins/MyApp.Dashboard.Plugin/MyApp.Dashboard.Plugin.dll");
 ```
 
-The assembly is loaded into an isolated `PluginLoadContext`. When unloaded, the context is released and the GC collects the assembly.
+The assembly is loaded into its own `PluginLoadContext`. When unloaded, the context is released and the GC can collect the assembly once nothing references its types any more.
 
 ### In-process plugins (testing / embedded)
 
-For testing or when you don't need isolation, implement `IPlugin` directly in the host project and load it in-process. Just don't call `LoadPluginAsync` — manage the lifecycle manually using the same pattern.
+For testing or when you don't need isolation, implement `IPlugin` directly in the host project, run its lifecycle yourself and register it with `RegisterInProcessPluginAsync(plugin, context)` so it takes part in health checks and shutdown. Don't call `LoadPluginAsync` for it.
+
+---
+
+## Isolation
+
+- `CodeLogic` (and any simple names in `PluginOptions.SharedAssemblies`) always resolves to the host's copy, so `IPlugin` and other contract types have one identity.
+- Every other dependency resolves from the plugin's own `.deps.json` / folder first, then from the host. A plugin never receives an assembly loaded by another plugin.
+- Plugins still run in the host process with its permissions and share the event bus. It is not a security boundary.
+
+## Concurrency and failures
+
+- Lifecycle operations (load, register, unload, reload, dispose, hot reload) run one at a time; readers work on snapshots.
+- Plugin IDs are unique: loading a second plugin with a loaded ID throws before it starts.
+- A failed load disposes the instance (after `OnUnloadAsync` if `OnStartAsync` was entered) and unloads its context. A failing `OnUnloadAsync` is reported but the plugin is still disposed and removed.
 
 ---
 
@@ -227,6 +241,7 @@ CodeLogic.SetPluginManager(pluginManager);
 // The runtime will now:
 // - Include plugin health in GetHealthAsync()
 // - Call UnloadAllAsync() during StopAsync()
+// - Dispose the manager and clear the registration during ResetAsync()
 
 // Retrieve it later:
 var mgr = CodeLogic.GetPluginManager();
@@ -339,16 +354,15 @@ public class MyApp : IApplication
 
     public async Task OnStartAsync(ApplicationContext context)
     {
-        // Load all discovered plugins
+        // Load all discovered plugins...
         await _plugins!.LoadAllAsync();
 
-        // Or load a specific plugin
-        var pluginPath = Path.Combine(
-            CodeLogic.GetOptions().GetPluginsPath(),
-            "MyApp.Dashboard.Plugin",
-            "MyApp.Dashboard.Plugin.dll");
-
-        await _plugins.LoadPluginAsync(pluginPath);
+        // ...or, instead, load specific ones (loading an already-loaded ID throws):
+        // var pluginPath = Path.Combine(
+        //     CodeLogic.GetOptions().GetPluginsPath(),
+        //     "MyApp.Dashboard.Plugin",
+        //     "MyApp.Dashboard.Plugin.dll");
+        // await _plugins.LoadPluginAsync(pluginPath);
     }
 
     public async Task OnStopAsync()
@@ -363,8 +377,11 @@ public class MyApp : IApplication
 
 ### Accessing a loaded plugin
 
+The host sees a DLL plugin only through shared types: `IPlugin`, or a contract interface from an assembly listed in `PluginOptions.SharedAssemblies`. A class defined in the plugin assembly itself is a different type in the host, so ask for the shared interface:
+
 ```csharp
-var dashboard = CodeLogic.GetPluginManager()?.GetPlugin<DashboardPlugin>("myapp.dashboard");
+// IDashboard lives in a contracts assembly shared with the host.
+var dashboard = CodeLogic.GetPluginManager()?.GetPlugin<IPlugin>("myapp.dashboard") as IDashboard;
 dashboard?.SetTheme("light");
 ```
 

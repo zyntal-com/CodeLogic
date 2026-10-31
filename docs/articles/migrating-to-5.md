@@ -52,6 +52,12 @@ All 13 events in `FrameworkEvents.cs` now derive from `closed record FrameworkEv
 
 Timestamps, date folders in log paths, and upper-cased library and plugin IDs now use the invariant culture. On machines with a non-Gregorian calendar (such as th-TH) or a Turkish locale, log folders and logger names may differ from 4.x.
 
+### Plugins
+
+- **Dependencies resolve inside the plugin.** A plugin no longer receives whatever assembly with a matching name is already loaded in the process. `CodeLogic` is always the host's copy; other dependencies come from the plugin's own folder first and from the host only when the plugin doesn't ship them. If the host and a plugin exchange types from another assembly (a shared contracts library, say) and the plugin ships its own copy, add that assembly's simple name to `PluginOptions.SharedAssemblies`.
+- **Plugin IDs must be unique.** `LoadPluginAsync` throws `InvalidOperationException` for an ID that is already loaded instead of replacing the running plugin. Use `ReloadPluginAsync` to replace one.
+- **`ResetAsync` disposes the registered `PluginManager`.** After a reset, create and register a new manager; the old one throws `ObjectDisposedException`.
+
 ## New in 5.0
 
 - Exhaustive `switch` over `Result<T>`, `Result`, `Error` and `FrameworkEvent`.

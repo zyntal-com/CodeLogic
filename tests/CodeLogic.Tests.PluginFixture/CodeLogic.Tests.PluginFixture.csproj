@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Test plugin loaded by PluginManagerTests from a copy of this project's output folder.
+    CodeLogic.dll is deliberately copied next to it (Private stays true): the plugin load context must
+    still share the host's CodeLogic so IPlugin has one identity.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/CodeLogic.csproj" />
+    <ProjectReference Include="../CodeLogic.Tests.PluginFixture.Dependency/CodeLogic.Tests.PluginFixture.Dependency.csproj" />
+  </ItemGroup>
+</Project>

@@ -62,7 +62,8 @@ public interface ICodeLogicRuntime
     Task StopAsync();
 
     /// <summary>
-    /// Stops everything and resets the runtime to uninitialized state.
+    /// Stops everything and resets the runtime to uninitialized state, including disposing and
+    /// unregistering the plugin manager set with <see cref="SetPluginManager"/>.
     /// Allows calling <see cref="InitializeAsync"/> again — useful for integration tests.
     /// </summary>
     Task ResetAsync();
@@ -110,7 +111,8 @@ public interface ICodeLogicRuntime
 
     /// <summary>
     /// Registers an app-managed PluginManager with the runtime so it participates
-    /// in health checks and graceful shutdown. Call after InitializeAsync.
+    /// in health checks and graceful shutdown. Call after InitializeAsync. From then on the runtime
+    /// owns it: <see cref="ResetAsync"/> disposes it and clears the registration.
     /// </summary>
     void SetPluginManager(PluginManager manager);
 
