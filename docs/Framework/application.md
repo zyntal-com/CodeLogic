@@ -103,13 +103,13 @@ Override it to add meaningful checks:
 public async Task<HealthStatus> HealthCheckAsync()
 {
     // Check that a required library service is responsive
-    var sqlite = Libraries.Get<SqliteLibrary>();
-    if (sqlite == null)
-        return HealthStatus.Unhealthy("SQLite library not available");
+    var data = Libraries.Get<DataLibrary>();
+    if (data == null)
+        return HealthStatus.Unhealthy("Data library not available");
 
     try
     {
-        await sqlite.PingAsync();
+        await data.Db().PingAsync();
         return HealthStatus.Healthy("Application healthy");
     }
     catch (Exception ex)
@@ -232,7 +232,7 @@ if (result.ShouldExit) return;
 
 // Register libraries first
 await Libraries.LoadAsync<ZWaveLibrary>();
-await Libraries.LoadAsync<SqliteLibrary>();
+await Libraries.LoadAsync<DataLibrary>();
 
 // Register the application
 CodeLogic.RegisterApplication(new HomePointApp());

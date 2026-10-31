@@ -1,0 +1,23 @@
+<Project>
+  <!--
+    Strong-name signing for every CodeLogic assembly (the same key in CodeLogic and CodeLogic.Libs; keep both copies identical).
+    Public key token: 53a89305eedc5d98 (2048-bit RSA).
+
+    - Every build signs. Local and CI builds public-sign with the committed public key (codelogic.public.snk),
+      which gives the final assembly identity without the private key.
+    - Release builds pass -p:CLStrongNameKeyFile=<path to the private .snk> (written from the repository secret
+      CL_STRONG_NAME_KEY by release.yml) and are fully signed. The private key is never committed.
+    - Opt a project out with <CLStrongName>false</CLStrongName> (before this file is imported, or on the command line).
+
+    Strong naming is identity, not security (https://learn.microsoft.com/dotnet/standard/library-guidance/strong-naming).
+  -->
+  <PropertyGroup Condition="'$(CLStrongName)' != 'false'">
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile Condition="'$(CLStrongNameKeyFile)' == ''">$(MSBuildThisFileDirectory)codelogic.public.snk</AssemblyOriginatorKeyFile>
+    <PublicSign Condition="'$(CLStrongNameKeyFile)' == ''">true</PublicSign>
+    <AssemblyOriginatorKeyFile Condition="'$(CLStrongNameKeyFile)' != ''">$(CLStrongNameKeyFile)</AssemblyOriginatorKeyFile>
+    <PublicSign Condition="'$(CLStrongNameKeyFile)' != ''">false</PublicSign>
+    <!-- Friend assemblies are signed with the same key; StrongName.targets adds it to every InternalsVisibleTo. -->
+    <CLPublicKey>0024000004800000140100000602000000240000525341310008000001000100396437db49bf1a08dac4b232091466189f87d9a54515eea46ab7b2268e97d8ce186603bf717301fefdd6a84c90213064478a0808b9cccfc1b04bdfa21b73c1aeebd1f2d0cb53c8c5a09128096f77d6c9b2aaed304921ccf04816971b44e159afeb48a069560940d1b5e909c4fa0fadc7d47e4cc7a3defa635826658978cdbac83c66f5afb931fda4d21671825412689914e836cd78084a8c92ad416c4f4e992a0109a5d575eda76fc90548161153087e462dd7989cc82a65cc006fe82a5268b43bc01e60643d94377a09da01d67e4da8ceb8af7d213a04f038ddd7d078212f2bd0e293ebb27a11293f371e9a110f5d8a5fe0828175a59f5f095b7604147229c8</CLPublicKey>
+  </PropertyGroup>
+</Project>

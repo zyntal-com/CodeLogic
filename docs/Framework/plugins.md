@@ -58,7 +58,7 @@ public sealed class PluginManifest
     string Version { get; init; }              // "1.0.0"
     string? Description { get; init; }
     string? Author { get; init; }
-    string? MinFrameworkVersion { get; init; } // "3.0.0" — informational
+    string? MinFrameworkVersion { get; init; } // "5.0.0" — informational
 }
 ```
 
@@ -259,7 +259,7 @@ public class DashboardPlugin : IPlugin
         Name               = "Dashboard Plugin",
         Version            = "1.0.0",
         Description        = "Real-time dashboard UI",
-        MinFrameworkVersion = "3.0.0"
+        MinFrameworkVersion = "5.0.0"
     };
 
     public PluginState State { get; private set; } = PluginState.Discovered;

@@ -1,6 +1,6 @@
 # API Reference
 
-This section contains the complete API reference for CodeLogic 4, generated from XML documentation comments in the source code.
+This section contains the complete API reference for CodeLogic 5, generated from XML documentation comments in the source code.
 
 ## Namespaces
 

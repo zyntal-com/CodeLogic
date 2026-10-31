@@ -1,0 +1,4 @@
+<Project>
+  <!-- Strong-name signing for every project in the repo (library, tests, samples); see build/StrongName.props. -->
+  <Import Project="build/StrongName.props" />
+</Project>

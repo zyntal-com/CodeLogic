@@ -108,6 +108,16 @@ public readonly struct Result : Result.IUnionMembers, IEquatable<Result>
     public TOut Match<TOut>(Func<TOut> onSuccess, Func<Error, TOut> onFailure) =>
         _isSuccess ? onSuccess() : onFailure(ErrorOrEmpty());
 
+    /// <summary>
+    /// Throws <see cref="ResultFailedException"/> when the result is a failure (or empty); does nothing on success.
+    /// The non-generic counterpart of <see cref="Result{T}.ValueOrThrow"/>, for tests, scripts and startup code
+    /// where a failure is a bug.
+    /// </summary>
+    public void ThrowIfFailure()
+    {
+        if (!_isSuccess) throw new ResultFailedException(ErrorOrEmpty());
+    }
+
     /// <summary>Executes the action only when the result is a success.</summary>
     public Result OnSuccess(Action action)
     {

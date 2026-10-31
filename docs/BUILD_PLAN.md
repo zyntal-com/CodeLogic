@@ -1,3 +1,7 @@
+> **Historical document.** This is the original CodeLogic 3.0 design plan (.NET 10). It is kept for
+> background only; the current framework is CodeLogic 5 on .NET 11. See the
+> [documentation index](index.md) and [Migrating to 5.0](articles/migrating-to-5.md).
+
 # CodeLogic 3 — Complete Build Plan
 
 > Historical design document. Some implementation details here may no longer match the current codebase or published documentation.

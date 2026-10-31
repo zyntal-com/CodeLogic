@@ -38,7 +38,23 @@ public sealed class ResultTests
         Assert.True(fail.IsFailure);
         Assert.IsType<ValidationError>(fail.Error);
         Assert.Equal(0, fail.ValueOrDefault(0));
-        Assert.Throws<InvalidOperationException>(() => fail.ValueOrThrow());
+        Assert.ThrowsAny<InvalidOperationException>(() => fail.ValueOrThrow());   // existing catch blocks keep working
+        Assert.IsType<ValidationError>(Assert.Throws<ResultFailedException>(() => fail.ValueOrThrow()).Error);
+    }
+
+    [Fact]
+    public void ThrowIfFailure_throws_only_for_failures_and_carries_the_error()
+    {
+        Result.Success().ThrowIfFailure();
+
+        Result failed = Error.Conflict("thing.conflict", "already there");
+        var thrown = Assert.Throws<ResultFailedException>(failed.ThrowIfFailure);
+        Assert.IsType<ConflictError>(thrown.Error);
+        Assert.Equal("thing.conflict", thrown.Error.Code);
+        Assert.IsAssignableFrom<InvalidOperationException>(thrown);
+
+        Result empty = default;
+        Assert.Equal(Error.Empty, Assert.Throws<ResultFailedException>(empty.ThrowIfFailure).Error);
     }
 
     [Fact]

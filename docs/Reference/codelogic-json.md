@@ -23,7 +23,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 {
   "framework": {
     "name": "CodeLogic",
-    "version": "3.0.0"
+    "version": "5.0.0"
   },
   "logging": {
     "mode": "singleFile",
@@ -68,7 +68,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `name` | string | `"CodeLogic"` | Informational display name |
-| `version` | string | `"3.0.0"` | Informational framework version |
+| `version` | string | `"5.0.0"` | Informational framework version |
 
 ### `logging`
 
@@ -101,7 +101,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 |----------|------|---------|-------------|
 | `discoveryPattern` | string | `"CL.*"` | Directory pattern used under `Libraries/` |
 | `enableDependencyResolution` | bool | `true` | Topologically sort libraries before startup |
-| `configHotReload.enabled` | bool | `false` | Watch `Libraries/*/config*.json` and reload a section when its file is edited (4.9.0+). Invalid edits are logged and ignored. See [Configuration › Watching config files](../Core/configuration.md#watching-config-files) |
+| `configHotReload.enabled` | bool | `false` | Watch `Libraries/*/config*.json` and reload a section when its file is edited. Invalid edits are logged and ignored. See [Configuration › Watching config files](../Core/configuration.md#watching-config-files) |
 | `configHotReload.debounceMs` | int | `500` | Quiet period after the last file event before reloading |
 
 ### `healthChecks`
@@ -119,7 +119,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 {
   "framework": {
     "name": "CodeLogic",
-    "version": "3.0.0"
+    "version": "5.0.0"
   },
   "logging": {
     "mode": "singleFile",

@@ -1,0 +1,6 @@
+<Project>
+  <!-- A signed assembly may only grant internals to signed friends, named with their public key. -->
+  <ItemGroup Condition="'$(SignAssembly)' == 'true' And '$(CLPublicKey)' != ''">
+    <InternalsVisibleTo Update="@(InternalsVisibleTo)" Key="$(CLPublicKey)" />
+  </ItemGroup>
+</Project>

@@ -130,9 +130,9 @@ public enum LoggingMode
 Writes to `{componentId}.log`. When the file reaches `MaxFileSizeMb`, it rolls:
 
 ```
-CL.SQLITE.log       ← current
-CL.SQLITE.1.log     ← previous
-CL.SQLITE.2.log     ← older
+CL.MAIL.log       ← current
+CL.MAIL.1.log     ← previous
+CL.MAIL.2.log     ← older
 ```
 
 Old files beyond `MaxRolledFiles` are deleted.
@@ -269,7 +269,7 @@ The framework logger itself always outputs at `Info` or higher to the console du
 | Component | Log directory |
 |-----------|---------------|
 | Framework | `CodeLogic/Framework/logs/` |
-| Library `CL.SQLite` | `CodeLogic/Libraries/CL.SQLite/logs/` |
+| Library `CL.Mail` | `CodeLogic/Libraries/CL.Mail/logs/` |
 | Application | `CodeLogic/Application/logs/` (or `{ApplicationRootPath}/logs/`) |
 | Plugin `MyApp.Plugin` | `CodeLogic/Plugins/MyApp.Plugin/logs/` |
 
