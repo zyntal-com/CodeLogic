@@ -1,0 +1,23 @@
+root = true
+
+[*.cs]
+# src/CodeLogic.csproj builds with AnalysisLevel=latest-recommended. The rules below are
+# turned down deliberately; everything else in the recommended set is expected to be clean.
+
+# Public names such as Error, ILogger.Error, Get<T>() and the `event` parameter are part of
+# the established API surface; renaming them for VB keyword compatibility is not worth the break.
+dotnet_diagnostic.CA1716.severity = none
+
+# Result<T>.Success / Result<T>.Failure static factories are the intended way to build results.
+dotnet_diagnostic.CA1000.severity = none
+
+# Explicit default initializers are a readability choice in this codebase.
+dotnet_diagnostic.CA1805.severity = none
+
+# CodeLogicRuntime / ConfigurationManager release their timer, semaphore and library manager
+# through the framework lifecycle (StopAsync), not IDisposable.
+dotnet_diagnostic.CA1001.severity = none
+
+# Advisory only: interface-typed fields and instance members are kept for API shape.
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1859.severity = suggestion

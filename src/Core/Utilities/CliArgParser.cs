@@ -71,7 +71,7 @@ public static class CliArgParser
             if (arg == "--info")     { showInfo = true;       collectingLibs = false; continue; }
             if (arg == "--health")   { showHealth = true;     collectingLibs = false; continue; }
 
-            if (arg.StartsWith("--"))
+            if (arg.StartsWith("--", StringComparison.Ordinal))
             {
                 collectingLibs = false;
                 continue;

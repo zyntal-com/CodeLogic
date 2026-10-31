@@ -18,7 +18,7 @@ public sealed class LibraryManager : IDisposable
     private readonly List<LoadedLibrary> _libraries = [];
     private readonly Dictionary<string, ILibrary> _librariesById = [];
     private readonly IEventBus _eventBus;
-    private readonly object _configOverrideLock = new();
+    private readonly Lock _configOverrideLock = new();
     private readonly List<ConfigOverrideRegistration> _configOverrides = [];
     private bool _configurationStarted;
     private FileSystemWatcher? _configWatcher;
@@ -745,7 +745,7 @@ public sealed class LibraryManager : IDisposable
         Directory.CreateDirectory(locDir);
 
         var logger = new Logger(
-            libraryId.ToUpper(), logsDir, LoggingOptions.GlobalLevel, LoggingOptions);
+            libraryId.ToUpperInvariant(), logsDir, LoggingOptions.GlobalLevel, LoggingOptions);
 
         return new LibraryContext
         {

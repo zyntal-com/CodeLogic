@@ -19,7 +19,7 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly IReadOnlyList<string> _supportedCultures;
     private readonly Dictionary<string, LoadedPlugin> _plugins = [];
     private readonly Dictionary<string, DateTime> _reloadDebounce = [];
-    private readonly object _reloadLock = new();
+    private readonly Lock _reloadLock = new();
     private FileSystemWatcher? _watcher;
 
     /// <summary>Raised when a plugin is successfully loaded.</summary>
@@ -340,7 +340,7 @@ public sealed class PluginManager : IAsyncDisposable
         Directory.CreateDirectory(dataDir);
         Directory.CreateDirectory(locDir);
 
-        var logger = new Logger(pluginId.ToUpper(), logsDir, _loggingOptions.GlobalLevel, _loggingOptions);
+        var logger = new Logger(pluginId.ToUpperInvariant(), logsDir, _loggingOptions.GlobalLevel, _loggingOptions);
 
         return new PluginContext
         {

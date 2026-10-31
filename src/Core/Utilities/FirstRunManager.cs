@@ -11,6 +11,12 @@ public static class FirstRunManager
 {
     private const string MarkerFileName = ".codelogic";
 
+    private static readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     /// <summary>Returns true if the framework has not yet been initialized at the given root path.</summary>
     public static bool IsFirstRun(string frameworkRootPath)
     {
@@ -84,11 +90,7 @@ public static class FirstRunManager
 
     private static async Task GenerateCodeLogicJsonAsync(string frameworkRoot)
     {
-        var jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
+        var jsonOptions = _jsonOptions;
 
         // ── CodeLogic.json — production defaults (always generated) ──────────
         var configPath = Path.Combine(frameworkRoot, "Framework", "CodeLogic.json");
@@ -162,11 +164,7 @@ public static class FirstRunManager
             version = "3.0.0",
             machine = Environment.MachineName
         };
-        var json = JsonSerializer.Serialize(marker, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(marker, _jsonOptions);
         await File.WriteAllTextAsync(GetMarkerPath(frameworkRoot), json);
     }
 

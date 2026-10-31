@@ -7,7 +7,7 @@ namespace CodeLogic.Core.Events;
 public sealed class EventBus : IEventBus
 {
     private readonly Dictionary<Type, List<SubscriptionEntry>> _subscriptions = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     /// <inheritdoc />
     public void Publish<T>(T @event) where T : IEvent

@@ -22,7 +22,7 @@ public sealed class ConfigurationManager : IConfigurationManager
     private readonly Dictionary<Type, string> _registered = []; // Type → subConfigName
     private readonly ConcurrentDictionary<string, string> _knownContent = new(StringComparer.OrdinalIgnoreCase); // path → hash
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-    private readonly object _notifyGate = new();
+    private readonly Lock _notifyGate = new();
     private Task _notifyTail = Task.CompletedTask;
 
     // Set while change handlers run, so a handler that saves config again doesn't wait on itself.

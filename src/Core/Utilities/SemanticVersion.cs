@@ -15,9 +15,9 @@ public sealed class SemanticVersion : IComparable<SemanticVersion>
     /// <summary>Initializes a new semantic version with the specified components.</summary>
     public SemanticVersion(int major, int minor, int patch)
     {
-        if (major < 0) throw new ArgumentOutOfRangeException(nameof(major));
-        if (minor < 0) throw new ArgumentOutOfRangeException(nameof(minor));
-        if (patch < 0) throw new ArgumentOutOfRangeException(nameof(patch));
+        ArgumentOutOfRangeException.ThrowIfNegative(major);
+        ArgumentOutOfRangeException.ThrowIfNegative(minor);
+        ArgumentOutOfRangeException.ThrowIfNegative(patch);
 
         Major = major;
         Minor = minor;
