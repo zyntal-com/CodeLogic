@@ -19,8 +19,8 @@ public interface IPlugin : IDisposable
     PluginManifest Manifest { get; }
 
     /// <summary>
-    /// Current lifecycle state of this plugin instance.
-    /// Transitions from <see cref="PluginState.Discovered"/> through to <see cref="PluginState.Started"/>.
+    /// Current lifecycle state as the plugin itself reports it. <see cref="PluginManager"/> does not read or set
+    /// it; the authoritative state is <see cref="LoadedPlugin.State"/> from <see cref="PluginManager.GetLoadedPlugins"/>.
     /// </summary>
     PluginState State { get; }
 

@@ -11,7 +11,7 @@ public sealed class ParsedCliArgs
     public bool GenerateConfigsForce { get; init; }
     /// <summary>Library IDs to scope config generation to, or null for all.</summary>
     public string[]? GenerateConfigsFor { get; init; }  // null = all
-    /// <summary>Whether to exit after config generation completes.</summary>
+    /// <summary>Whether the --exit-after-generate flag was specified: stop after config generation instead of starting.</summary>
     public bool ExitAfterGenerate { get; init; }
     /// <summary>Whether the --dry-run flag was specified.</summary>
     public bool DryRun { get; init; }
@@ -43,6 +43,7 @@ public static class CliArgParser
         bool generateConfigs = false;
         bool generateConfigsForce = false;
         bool dryRun = false;
+        bool exitAfterGenerate = false;
         bool showVersion = false;
         bool showInfo = false;
         bool showHealth = false;
@@ -67,6 +68,7 @@ public static class CliArgParser
                 continue;
             }
             if (arg == "--dry-run")  { dryRun = true;       collectingLibs = false; continue; }
+            if (arg == "--exit-after-generate") { exitAfterGenerate = true; collectingLibs = false; continue; }
             if (arg == "--version")  { showVersion = true;   collectingLibs = false; continue; }
             if (arg == "--info")     { showInfo = true;       collectingLibs = false; continue; }
             if (arg == "--health")   { showHealth = true;     collectingLibs = false; continue; }
@@ -87,6 +89,7 @@ public static class CliArgParser
             GenerateConfigs      = generateConfigs,
             GenerateConfigsForce = generateConfigsForce,
             GenerateConfigsFor   = scopedLibs.Count > 0 ? scopedLibs.ToArray() : null,
+            ExitAfterGenerate    = exitAfterGenerate,
             DryRun               = dryRun,
             ShowVersion          = showVersion,
             ShowInfo             = showInfo,

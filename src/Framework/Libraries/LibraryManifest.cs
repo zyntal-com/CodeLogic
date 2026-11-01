@@ -12,7 +12,8 @@ public sealed class LibraryManifest
     /// <summary>
     /// Unique identifier for this library. By convention, prefixed with <c>CL.</c>
     /// (e.g., <c>"CL.SQLite"</c>, <c>"CL.Mail"</c>).
-    /// The ID determines the library's directory name under <c>Libraries/</c>.
+    /// The ID determines the library's directory name under <c>Libraries/</c> and its log file name, so it must be
+    /// a single file-name segment (no path separators, <c>..</c> or characters invalid in file names).
     /// </summary>
     public required string Id { get; init; }
 
@@ -29,7 +30,7 @@ public sealed class LibraryManifest
     public required string Version { get; init; }
 
     /// <summary>
-    /// Optional description of what this library provides. Shown in <c>--info</c> output.
+    /// Optional description of what this library provides. Informational: not used by the framework.
     /// </summary>
     public string? Description { get; init; }
 
@@ -39,7 +40,8 @@ public sealed class LibraryManifest
     public string? Author { get; init; }
 
     /// <summary>
-    /// Other libraries this library depends on. Used for topological sort during startup.
+    /// Other libraries this library depends on. Used for topological sort during startup, together with
+    /// any <see cref="LibraryDependencyAttribute"/> on the library class.
     /// Required dependencies that are missing will prevent startup.
     /// Optional dependencies that are missing are silently skipped.
     /// </summary>
@@ -100,7 +102,9 @@ public sealed record LibraryDependency
 
 /// <summary>
 /// Applied to library classes to declare dependencies on other libraries.
-/// Equivalent to adding entries to <see cref="LibraryManifest.Dependencies"/>.
+/// Equivalent to adding entries to <see cref="LibraryManifest.Dependencies"/>: the library manager merges
+/// both into <see cref="LoadedLibrary.Dependencies"/> for startup ordering and version validation (a
+/// manifest entry wins when both declare the same ID). Inherited from base classes.
 /// Can be applied multiple times for multiple dependencies.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]

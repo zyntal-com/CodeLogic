@@ -35,6 +35,15 @@ public sealed class LocalizationManager : ILocalizationManager
     private readonly Lock _registeredLock = new();
     private readonly List<Type> _registered = [];
 
+    /// <summary>What a load does when a culture file is missing.</summary>
+    private enum MissingFile { Throw, Generate, UseDefaults }
+
+    /// <summary>
+    /// Called after <see cref="ReloadAllAsync"/> succeeds. The framework sets it to publish
+    /// <see cref="Events.LocalizationReloadedEvent"/> for the owning component.
+    /// </summary>
+    internal Action? Reloaded { get; set; }
+
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         WriteIndented = true,
@@ -124,7 +133,7 @@ public sealed class LocalizationManager : ILocalizationManager
             var type = typeof(T);
             Dictionary<string, object> loaded = current.TryGetValue(type, out var existing) ? new(existing) : [];
 
-            await LoadIntoAsync<T>(cultures, generateIfMissing, loaded).ConfigureAwait(false);
+            await LoadIntoAsync<T>(cultures, ToMode(generateIfMissing), loaded).ConfigureAwait(false);
 
             _localizations = new Dictionary<Type, Dictionary<string, object>>(current) { [type] = loaded };
         }
@@ -140,7 +149,18 @@ public sealed class LocalizationManager : ILocalizationManager
 
     /// <inheritdoc />
     public Task LoadAllAsync(IReadOnlyList<string> cultures, bool generateIfMissing = true) =>
-        LoadRegisteredAsync(cultures, generateIfMissing, replaceAll: false);
+        LoadRegisteredAsync(cultures, ToMode(generateIfMissing), replaceAll: false);
+
+    /// <summary>
+    /// Loads every registered type like <see cref="LoadAllAsync"/>, but a missing culture file is neither
+    /// generated nor an error: the model's built-in default strings are used in memory. Used by the
+    /// framework when <c>localization.autoGenerateTemplates</c> is false.
+    /// </summary>
+    internal Task LoadAllWithoutGeneratingAsync(IReadOnlyList<string> cultures) =>
+        LoadRegisteredAsync(cultures, MissingFile.UseDefaults, replaceAll: false);
+
+    private static MissingFile ToMode(bool generateIfMissing) =>
+        generateIfMissing ? MissingFile.Generate : MissingFile.Throw;
 
     /// <inheritdoc />
     /// <remarks>
@@ -148,12 +168,15 @@ public sealed class LocalizationManager : ILocalizationManager
     /// once every file has loaded: <see cref="Get{T}"/> keeps returning the previous translations during
     /// the reload, and still does if the reload throws.
     /// </remarks>
-    public Task ReloadAllAsync(IReadOnlyList<string> cultures) =>
-        LoadRegisteredAsync(cultures, generateIfMissing: true, replaceAll: true);
+    public async Task ReloadAllAsync(IReadOnlyList<string> cultures)
+    {
+        await LoadRegisteredAsync(cultures, MissingFile.Generate, replaceAll: true).ConfigureAwait(false);
+        Reloaded?.Invoke();
+    }
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    private async Task LoadRegisteredAsync(IReadOnlyList<string> cultures, bool generateIfMissing, bool replaceAll)
+    private async Task LoadRegisteredAsync(IReadOnlyList<string> cultures, MissingFile missing, bool replaceAll)
     {
         ValidateCultures(cultures);
         await _loadGate.WaitAsync().ConfigureAwait(false);
@@ -167,7 +190,7 @@ public sealed class LocalizationManager : ILocalizationManager
                     ? new(existing)
                     : [];
                 await InvokeGenericAsync(nameof(LoadIntoAsync), BindingFlags.NonPublic, type,
-                    cultures, generateIfMissing, loaded).ConfigureAwait(false);
+                    cultures, missing, loaded).ConfigureAwait(false);
                 next[type] = loaded;
             }
             _localizations = next;
@@ -176,7 +199,7 @@ public sealed class LocalizationManager : ILocalizationManager
     }
 
     /// <summary>Loads <paramref name="cultures"/> of <typeparamref name="T"/> into <paramref name="target"/> (culture → instance).</summary>
-    private async Task LoadIntoAsync<T>(IReadOnlyList<string> cultures, bool generateIfMissing, Dictionary<string, object> target)
+    private async Task LoadIntoAsync<T>(IReadOnlyList<string> cultures, MissingFile missing, Dictionary<string, object> target)
         where T : LocalizationModelBase, new()
     {
         var type = typeof(T);
@@ -185,28 +208,45 @@ public sealed class LocalizationManager : ILocalizationManager
         foreach (var culture in cultures)
         {
             var filePath = GetFilePath<T>(culture);
-            if (!File.Exists(filePath))
-            {
-                if (!generateIfMissing)
-                    throw new FileNotFoundException(
-                        $"Localization file for '{type.Name}' and culture '{culture}' not found at: {filePath}");
-
-                await GenerateTemplatesAsync<T>([culture]).ConfigureAwait(false);
-            }
-
-            var json = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
             T localization;
 
-            if (culture == _defaultCulture)
+            if (!File.Exists(filePath) && missing == MissingFile.UseDefaults)
             {
-                localization = JsonSerializer.Deserialize<T>(json, _jsonOptions)
-                    ?? throw new InvalidOperationException(
-                        $"Failed to deserialize '{type.Name}' localization from {filePath}");
+                // No file and generation is off: the model's built-in strings, in memory only.
+                if (culture == _defaultCulture)
+                {
+                    localization = new T();
+                }
+                else
+                {
+                    defaultLocalization ??= await EnsureDefaultLoadedAsync<T>(missing, target).ConfigureAwait(false);
+                    localization = MergeWithDefault(defaultLocalization, "{}");
+                }
             }
             else
             {
-                defaultLocalization ??= await EnsureDefaultLoadedAsync<T>(generateIfMissing, target).ConfigureAwait(false);
-                localization = MergeWithDefault(defaultLocalization, json);
+                if (!File.Exists(filePath))
+                {
+                    if (missing == MissingFile.Throw)
+                        throw new FileNotFoundException(
+                            $"Localization file for '{type.Name}' and culture '{culture}' not found at: {filePath}");
+
+                    await GenerateTemplatesAsync<T>([culture]).ConfigureAwait(false);
+                }
+
+                var json = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
+
+                if (culture == _defaultCulture)
+                {
+                    localization = JsonSerializer.Deserialize<T>(json, _jsonOptions)
+                        ?? throw new InvalidOperationException(
+                            $"Failed to deserialize '{type.Name}' localization from {filePath}");
+                }
+                else
+                {
+                    defaultLocalization ??= await EnsureDefaultLoadedAsync<T>(missing, target).ConfigureAwait(false);
+                    localization = MergeWithDefault(defaultLocalization, json);
+                }
             }
 
             localization.Culture = culture;
@@ -268,7 +308,7 @@ public sealed class LocalizationManager : ILocalizationManager
         return !string.IsNullOrWhiteSpace(attr?.SectionName) ? attr.SectionName : typeof(T).Name;
     }
 
-    private async Task<T> EnsureDefaultLoadedAsync<T>(bool generateIfMissing, Dictionary<string, object> target)
+    private async Task<T> EnsureDefaultLoadedAsync<T>(MissingFile missing, Dictionary<string, object> target)
         where T : LocalizationModelBase, new()
     {
         var type = typeof(T);
@@ -279,7 +319,13 @@ public sealed class LocalizationManager : ILocalizationManager
         var filePath = GetFilePath<T>(_defaultCulture);
         if (!File.Exists(filePath))
         {
-            if (!generateIfMissing)
+            if (missing == MissingFile.UseDefaults)
+            {
+                var defaults = new T { Culture = _defaultCulture };
+                target[_defaultCulture] = defaults;
+                return defaults;
+            }
+            if (missing == MissingFile.Throw)
                 throw new FileNotFoundException(
                     $"Localization file for '{type.Name}' and culture '{_defaultCulture}' not found at: {filePath}");
 
