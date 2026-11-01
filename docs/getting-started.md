@@ -1,4 +1,6 @@
-# Getting Started with CodeLogic 5
+# Getting Started in Depth
+
+> The short introduction is [Getting Started](articles/getting-started.md). This page walks through a complete application step by step.
 
 CodeLogic is a modular .NET 11 framework for building structured applications with libraries, plugins, configuration, localization, events, and health checks. This guide takes you from zero to a running application.
 
@@ -6,7 +8,15 @@ CodeLogic is a modular .NET 11 framework for building structured applications wi
 
 ## Installation
 
-Add CodeLogic as a project reference:
+
+
+Install the package from nuget.org (5.0 is in preview):
+
+```sh
+dotnet add package CodeLogic --prerelease
+```
+
+Or, to build against a local clone, add a project reference:
 
 ```xml
 <ItemGroup>
