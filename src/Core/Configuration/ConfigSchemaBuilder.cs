@@ -1,12 +1,16 @@
 using System.Collections;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CodeLogic.Core.Configuration;
 
 /// <summary>
 /// Reflects over a configuration type and produces a flat <see cref="ConfigSchema"/>
 /// describing every editable field. Handles nested objects, dictionaries of
-/// sub-configs, enums, and primitive types. Unknown complex types are represented
+/// sub-configs, string-keyed dictionaries of scalars, lists and arrays (of objects, scalars
+/// or enums), enums, and primitive types. Field paths use the JSON property names
+/// (<c>[JsonPropertyName]</c>, else camelCase), the same names the config file uses. Unknown complex types are represented
 /// as opaque "object" fields that UIs can skip or delegate to a custom editor.
 /// </summary>
 internal static class ConfigSchemaBuilder
@@ -33,6 +37,7 @@ internal static class ConfigSchemaBuilder
         {
             SectionName = sectionName,
             Title = sectionType.Name,
+            Description = sectionAttr?.Description,
             Version = sectionAttr?.Version ?? 1,
             Fields = fields
         };
@@ -48,14 +53,11 @@ internal static class ConfigSchemaBuilder
         bool includeSecrets,
         List<ConfigField> accumulator)
     {
-        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0)
-            .ToArray();
-
-        foreach (var prop in props)
+        foreach (var prop in EditableProperties(type))
         {
             var attr = prop.GetCustomAttribute<ConfigFieldAttribute>();
-            var fieldPath = string.IsNullOrEmpty(path) ? ToCamelCase(prop.Name) : $"{path}.{ToCamelCase(prop.Name)}";
+            var name = JsonName(prop);
+            var fieldPath = string.IsNullOrEmpty(path) ? name : $"{path}.{name}";
             var propType = prop.PropertyType;
             var currentValue = currentInstance is null ? null : prop.GetValue(currentInstance);
             var defaultValue = defaultInstance is null ? null : prop.GetValue(defaultInstance);
@@ -68,13 +70,40 @@ internal static class ConfigSchemaBuilder
                 continue;
             }
 
-            if (propType.IsEnum)
+            if (IsEnumType(propType))
             {
                 accumulator.Add(BuildEnumField(prop, attr, fieldPath, propType, currentValue, defaultValue, fieldGroup, fieldCollapsed, includeSecrets));
                 continue;
             }
 
-            if (IsDictionaryOfConfig(propType, out var valueType) && valueType is not null)
+            if (IsStringKeyedDictionary(propType, out var scalarValueType) && scalarValueType is not null
+                && IsScalarOrEnum(scalarValueType))
+            {
+                // Dictionary<string, scalar> — one key/value field.
+                var dictSecret = attr?.Secret ?? false;
+                var maskDict = dictSecret && !includeSecrets;
+                accumulator.Add(new ConfigField
+                {
+                    Path = fieldPath,
+                    Label = attr?.Label ?? Humanize(prop.Name),
+                    Description = attr?.Description,
+                    InputType = ConfigInputType.Textarea,
+                    TypeHint = "dict",
+                    Required = attr?.Required ?? false,
+                    Secret = dictSecret,
+                    RequiresRestart = attr?.RequiresRestart ?? false,
+                    Placeholder = attr?.Placeholder,
+                    AllowedValues = EnumNames(scalarValueType, maskDict),
+                    Group = fieldGroup,
+                    GroupCollapsed = fieldCollapsed,
+                    Order = attr?.Order ?? 0,
+                    DefaultValue = CopyDictionary(defaultValue, maskDict),
+                    CurrentValue = CopyDictionary(currentValue, maskDict)
+                });
+                continue;
+            }
+
+            if (IsStringKeyedDictionary(propType, out var valueType) && valueType is not null)
             {
                 // Dictionary<string, X> — iterate current entries. For each entry, recurse X with path "{fieldPath}.{key}".
                 if (currentValue is IDictionary dict)
@@ -106,8 +135,9 @@ internal static class ConfigSchemaBuilder
 
             if (IsListOfPrimitive(propType))
             {
-                // List of primitives renders as a single textarea (one value per line) — one field.
+                // List / array of primitives or enums renders as a single textarea (one value per line) — one field.
                 var listSecret = attr?.Secret ?? false;
+                var maskList = listSecret && !includeSecrets;
                 accumulator.Add(new ConfigField
                 {
                     Path = fieldPath,
@@ -119,15 +149,20 @@ internal static class ConfigSchemaBuilder
                     Secret = attr?.Secret ?? false,
                     RequiresRestart = attr?.RequiresRestart ?? false,
                     Placeholder = attr?.Placeholder,
+                    AllowedValues = EnumNames(ElementType(propType)!, maskList),
                     MaxLength = attr?.MaxLength > 0 ? attr.MaxLength : null,
                     Group = fieldGroup,
                     GroupCollapsed = fieldCollapsed,
                     Order = attr?.Order ?? 0,
-                    DefaultValue = listSecret && !includeSecrets ? MaskList(defaultValue) : defaultValue,
-                    CurrentValue = listSecret && !includeSecrets ? MaskList(currentValue) : currentValue
+                    DefaultValue = CopyList(defaultValue, maskList, ElementType(propType)),
+                    CurrentValue = CopyList(currentValue, maskList, ElementType(propType))
                 });
                 continue;
             }
+
+            // Other collections (sets, dictionaries with non-string keys, ...) can't be edited field by field.
+            if (typeof(IEnumerable).IsAssignableFrom(propType))
+                continue;
 
             // Nested complex object — recurse with dotted path.
             if (propType.IsClass && propType != typeof(string))
@@ -202,22 +237,75 @@ internal static class ConfigSchemaBuilder
     };
 
     /// <summary>
-    /// Copies a list of primitives with every set entry replaced by
-    /// <see cref="ConfigField.SecretMask"/>. Clients echo the masked entries back and
-    /// <see cref="ConfigurationManager.UpdateSectionAsync"/> restores them by position.
+    /// With <paramref name="mask"/>, copies a list of primitives with every set entry replaced by
+    /// <see cref="ConfigField.SecretMask"/>; clients echo the masked entries back and
+    /// <see cref="ConfigurationManager.UpdateSectionAsync"/> restores them by position. Without it,
+    /// lists of enums are copied as their names and any other list is returned as-is.
     /// </summary>
-    private static List<object?>? MaskList(object? value)
+    private static object? CopyList(object? value, bool mask, Type? elementType)
     {
         if (value is not IList list) return null;
-        var masked = new List<object?>(list.Count);
+        if (!mask && !IsEnumType(elementType)) return value;
+        var copy = new List<object?>(list.Count);
         foreach (var entry in list)
-            masked.Add(MaskScalar(entry));
-        return masked;
+            copy.Add(mask ? MaskScalar(entry) : entry?.ToString());
+        return copy;
     }
 
-    /// <summary>True for <c>List&lt;string&gt;</c> / <c>IList&lt;string&gt;</c> / <c>IReadOnlyList&lt;string&gt;</c>.</summary>
-    internal static bool IsListOfString(Type t) =>
-        IsListOfPrimitive(t) && t.GetGenericArguments()[0] == typeof(string);
+    /// <summary>
+    /// Copies a string-keyed dictionary of primitives (enums as their names), with every set value replaced by
+    /// <see cref="ConfigField.SecretMask"/> when <paramref name="mask"/> is set. Echoed masks are restored by key.
+    /// </summary>
+    private static Dictionary<string, object?>? CopyDictionary(object? value, bool mask)
+    {
+        if (value is not IDictionary dict) return null;
+        Dictionary<string, object?> copy = [with(StringComparer.Ordinal)];
+        foreach (DictionaryEntry entry in dict)
+        {
+            if (entry.Key.ToString() is not { } key) continue;
+            copy[key] = mask ? MaskScalar(entry.Value) : entry.Value is Enum e ? e.ToString() : entry.Value;
+        }
+        return copy;
+    }
+
+    private static string[]? EnumNames(Type type, bool masked)
+    {
+        var under = Nullable.GetUnderlyingType(type) ?? type;
+        return under.IsEnum && !masked ? Enum.GetNames(under) : null;
+    }
+
+    private static bool IsEnumType(Type? t) => t is not null && (Nullable.GetUnderlyingType(t) ?? t).IsEnum;
+
+    private static bool IsScalarOrEnum(Type t) => IsPrimitiveLike(t) || IsEnumType(t);
+
+    /// <summary>True for a list or array of strings (<c>List&lt;string&gt;</c>, <c>IList&lt;string&gt;</c>, <c>string[]</c>, ...).</summary>
+    internal static bool IsListOfString(Type t) => ElementType(t) == typeof(string);
+
+    /// <summary>The public read/write, non-indexer properties the schema and the secret restore walk; <c>[JsonIgnore]</c> ones are skipped.</summary>
+    internal static IEnumerable<PropertyInfo> EditableProperties(Type type) =>
+        type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
+                        && p.GetCustomAttribute<JsonIgnoreAttribute>() is not { Condition: JsonIgnoreCondition.Always });
+
+    /// <summary>
+    /// The property's name in the config file: its <c>[JsonPropertyName]</c>, else the camel-cased name
+    /// (the policy the configuration manager serializes with). Schema paths use it, so they match the
+    /// file, <see cref="ConfigDiff.DiffPaths"/> and the JSON sent to <c>UpdateSectionAsync</c>.
+    /// </summary>
+    internal static string JsonName(PropertyInfo prop) =>
+        prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
+        ?? JsonNamingPolicy.CamelCase.ConvertName(prop.Name);
+
+    /// <summary>The element type of a <c>List&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c> or one-dimensional array; otherwise null.</summary>
+    internal static Type? ElementType(Type t)
+    {
+        if (t.IsArray) return t.GetArrayRank() == 1 ? t.GetElementType() : null;
+        if (!t.IsGenericType) return null;
+        var def = t.GetGenericTypeDefinition();
+        return def == typeof(List<>) || def == typeof(IList<>) || def == typeof(IReadOnlyList<>)
+            ? t.GetGenericArguments()[0]
+            : null;
+    }
 
     private static ConfigField BuildEnumField(
         PropertyInfo prop,
@@ -230,7 +318,7 @@ internal static class ConfigSchemaBuilder
         bool groupCollapsed,
         bool includeSecrets)
     {
-        var names = Enum.GetNames(enumType);
+        var names = Enum.GetNames(Nullable.GetUnderlyingType(enumType) ?? enumType);
         var isSecret = attr?.Secret ?? false;
         var mask = isSecret && !includeSecrets;
         return new ConfigField
@@ -281,35 +369,28 @@ internal static class ConfigSchemaBuilder
             || under == typeof(byte) || under == typeof(sbyte);
     }
 
-    private static bool IsDictionaryOfConfig(Type t, out Type? valueType)
+    /// <summary>True for <c>Dictionary&lt;string, X&gt;</c>, <c>IDictionary&lt;string, X&gt;</c> and <c>IReadOnlyDictionary&lt;string, X&gt;</c>.</summary>
+    internal static bool IsStringKeyedDictionary(Type t, out Type? valueType)
     {
         valueType = null;
         if (!t.IsGenericType) return false;
         var def = t.GetGenericTypeDefinition();
-        if (def != typeof(Dictionary<,>) && def != typeof(IDictionary<,>)) return false;
+        if (def != typeof(Dictionary<,>) && def != typeof(IDictionary<,>) && def != typeof(IReadOnlyDictionary<,>)) return false;
         var args = t.GetGenericArguments();
         if (args[0] != typeof(string)) return false;
         valueType = args[1];
         return true;
     }
 
-    internal static bool IsListOfPrimitive(Type t)
-    {
-        if (!t.IsGenericType) return false;
-        var def = t.GetGenericTypeDefinition();
-        if (def != typeof(List<>) && def != typeof(IList<>) && def != typeof(IReadOnlyList<>)) return false;
-        return IsPrimitiveLike(t.GetGenericArguments()[0]);
-    }
+    /// <summary>True for a list or one-dimensional array of primitives (including <c>string</c>) or enums.</summary>
+    internal static bool IsListOfPrimitive(Type t) => ElementType(t) is { } element && IsScalarOrEnum(element);
 
-    /// <summary>True for <c>List&lt;X&gt;</c> / <c>IList&lt;X&gt;</c> / <c>IReadOnlyList&lt;X&gt;</c> of config objects.</summary>
+    /// <summary>True for a list or one-dimensional array of config objects.</summary>
     internal static bool IsListOfObjects(Type t, out Type? elementType)
     {
         elementType = null;
-        if (!t.IsGenericType) return false;
-        var def = t.GetGenericTypeDefinition();
-        if (def != typeof(List<>) && def != typeof(IList<>) && def != typeof(IReadOnlyList<>)) return false;
-        var arg = t.GetGenericArguments()[0];
-        if (IsPrimitiveLike(arg) || arg.IsEnum || !arg.IsClass) return false;
+        var arg = ElementType(t);
+        if (arg is null || IsPrimitiveLike(arg) || arg.IsEnum || !arg.IsClass) return false;
         elementType = arg;
         return true;
     }
@@ -336,9 +417,6 @@ internal static class ConfigSchemaBuilder
         if (under == typeof(Guid)) return "guid";
         return "object";
     }
-
-    private static string ToCamelCase(string name) =>
-        string.IsNullOrEmpty(name) ? name : char.ToLowerInvariant(name[0]) + name[1..];
 
     /// <summary>Turn "MinPoolSize" into "Min Pool Size".</summary>
     private static string Humanize(string name)

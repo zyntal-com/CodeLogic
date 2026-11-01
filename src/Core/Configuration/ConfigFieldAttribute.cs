@@ -36,7 +36,7 @@ public sealed class ConfigFieldAttribute : Attribute
     /// </summary>
     public ConfigInputType InputType { get; set; } = ConfigInputType.Auto;
 
-    /// <summary>When true, the UI should mark this field as required.</summary>
+    /// <summary>When true, the UI should mark this field as required. A hint for UIs: not enforced on save (use <see cref="ConfigModelBase.Validate"/> or DataAnnotations).</summary>
     public bool Required { get; set; }
 
     /// <summary>
@@ -44,9 +44,16 @@ public sealed class ConfigFieldAttribute : Attribute
     /// back the mask — the existing value is preserved on save. Typical for
     /// passwords, API keys, tokens.
     /// <para>
-    /// Applies to string properties (current and default value) and to lists of strings
-    /// (each entry is masked; echoed masks are restored by position, and a list whose length
-    /// changed while entries are still masked is rejected). Non-string values are not masked.
+    /// Applies to scalars of any type (current and default value), to lists and arrays of scalars
+    /// (each entry is masked; echoed masks are restored by position) and to string-keyed dictionaries
+    /// of scalars (restored by key). Secret fields inside list or dictionary entries are restored from
+    /// the matching stored entry (dictionaries by key, lists by the entry's <c>Id</c>/<c>Name</c>/<c>Key</c>
+    /// property, else by position when the length is unchanged). A mask that cannot be matched to a stored
+    /// value is rejected with a validation error; the placeholder is never written to the file.
+    /// </para>
+    /// <para>
+    /// Masking only affects what <see cref="IConfigurationManager.GetSchema"/> returns. The value is
+    /// stored in clear text in the config file (owner-only file mode on Unix).
     /// </para>
     /// </summary>
     public bool Secret { get; set; }
@@ -60,17 +67,17 @@ public sealed class ConfigFieldAttribute : Attribute
     /// <summary>
     /// Comma-separated list of allowed values for <see cref="ConfigInputType.Select"/>
     /// fields. For enum properties, the enum's values are used automatically if
-    /// this is not set.
+    /// this is not set. A hint for UIs: not enforced on save.
     /// </summary>
     public string? AllowedValues { get; set; }
 
-    /// <summary>Minimum numeric value. NaN means unset.</summary>
+    /// <summary>Minimum numeric value. NaN means unset. A hint for UIs: not enforced on save.</summary>
     public double Min { get; set; } = double.NaN;
 
-    /// <summary>Maximum numeric value. NaN means unset.</summary>
+    /// <summary>Maximum numeric value. NaN means unset. A hint for UIs: not enforced on save.</summary>
     public double Max { get; set; } = double.NaN;
 
-    /// <summary>Max length for string fields. 0 means unset.</summary>
+    /// <summary>Max length for string fields. 0 means unset. A hint for UIs: not enforced on save.</summary>
     public int MaxLength { get; set; }
 
     /// <summary>
