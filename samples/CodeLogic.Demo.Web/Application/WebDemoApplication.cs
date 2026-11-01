@@ -58,13 +58,15 @@ public class WebDemoApplication : IApplication
 
         // Log every incoming request (Trace — very verbose)
         context.Events.Subscribe<RequestReceivedEvent>(e =>
-            context.Logger.Trace($"Request: {e.Method} {e.Path}" +
-                                 (e.UserId != null ? $" user={e.UserId}" : "")));
+            context.Logger.Trace($"Request: {OneLine(e.Method)} {OneLine(e.Path)}" +
+                                 (e.UserId != null ? $" user={OneLine(e.UserId)}" : "")));
 
         // Log app notifications at appropriate level based on severity
+        // Title and message can come from an HTTP caller: strip control characters so a payload
+        // cannot forge extra log lines. (The /events endpoint never accepts "error" severity.)
         context.Events.Subscribe<AppNotificationEvent>(e =>
         {
-            var msg = $"Notification [{e.Severity}] {e.Title}: {e.Message}";
+            var msg = $"Notification [{OneLine(e.Severity)}] {OneLine(e.Title)}: {OneLine(e.Message)}";
             switch (e.Severity.ToLowerInvariant())
             {
                 case "error":    context.Logger.Error(msg);   break;
@@ -87,4 +89,12 @@ public class WebDemoApplication : IApplication
         Console.WriteLine($"[{Manifest.Name}] Stopping gracefully...");
         await Task.CompletedTask;
     }
+
+    /// <summary>Replaces control characters (CR, LF, ...) so caller-supplied text stays on one log line.</summary>
+    private static string OneLine(string value) =>
+        string.Create(value.Length, value, static (span, text) =>
+        {
+            for (var i = 0; i < text.Length; i++)
+                span[i] = char.IsControl(text[i]) ? ' ' : text[i];
+        });
 }
