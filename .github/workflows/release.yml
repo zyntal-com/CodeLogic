@@ -6,6 +6,11 @@ on:
       - 'release/**'
       - 'prerelease/**'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Publish even if nothing that ships changed since the last tag on this channel'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -19,13 +24,56 @@ jobs:
   # replaced or reused. Nothing is packed until the suite is green.
   # Creating a release/* or prerelease/* branch (Promote does this the first time) must not publish:
   # publishing happens through Promote's dispatch or a push of new commits.
-  verify:
+  # A bare dispatch on an unchanged channel must not mint a new 5.0.N of the same code. Compare
+  # the shipped inputs against the last tag of this channel kind (preview or stable); dispatch with
+  # force=true to publish anyway.
+  changes:
     if: github.event_name != 'push' || !github.event.created
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Detect changes since the last tag
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            echo "force=true - publishing without change detection"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          line=$(head -n1 version.txt | tr -d '[:space:]')
+          if [[ "${{ github.ref_name }}" == prerelease/* ]]; then
+            last=$(git tag --list "v$line.*-preview" --sort=-v:refname --merged HEAD | head -n1)
+          else
+            last=$(git tag --list "v$line.*" --sort=-v:refname --merged HEAD | grep -v -- '-' | head -n1 || true)
+          fi
+          if [ -z "$last" ]; then
+            echo "no earlier tag for this channel - publishing"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --quiet "$last" HEAD -- src build version.txt global.json Directory.Build.props Directory.Build.targets CHANGELOG.md README.md README.nuget.md logo.svg; then
+            echo "::notice::nothing that ships changed since $last - not publishing (dispatch with force=true to override)"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes since $last - publishing"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    needs: [changes]
+    if: needs.changes.outputs.has_changes == 'true'
     uses: ./.github/workflows/ci-tests.yml
 
   release:
-    needs: [verify]
-    if: github.event_name != 'push' || !github.event.created
+    needs: [changes, verify]
+    if: needs.changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     # Must match the nuget.org Trusted Publishing policy (workflow release.yml, environment production).
     environment: production
@@ -35,7 +83,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           # The immutable commit that triggered this run (the one `verify` tested and the tag and
@@ -44,7 +92,7 @@ jobs:
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -142,7 +190,7 @@ jobs:
       # Trusted Publishing: no long-lived API key. The temporary key is valid for ~1 hour.
       - name: NuGet login (OIDC)
         id: nuget-login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: ${{ vars.NUGET_USER }}
 
@@ -164,7 +212,7 @@ jobs:
           "@ | Set-Content 'artifacts/release-notes.md'
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # Tag the commit that was built. Without this a new tag lands on the default branch.
           target_commitish: ${{ github.sha }}
