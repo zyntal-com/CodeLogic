@@ -72,6 +72,12 @@ Configuration:
 }
 ```
 
+`intervalSeconds` must be greater than 0 while health checks are enabled; otherwise `InitializeAsync` fails.
+
+`HealthReport.ToJson()` includes every component's message (which can contain exception text), the
+machine name and the app version. For an unauthenticated endpoint use `ToJson(includeDetails: false)`,
+which returns only the overall flag, the timestamp and each component's status level.
+
 Example event subscription:
 
 ```csharp

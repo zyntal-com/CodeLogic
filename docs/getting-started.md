@@ -1,4 +1,6 @@
-# Getting Started with CodeLogic 5
+# Getting Started in Depth
+
+> The short introduction is [Getting Started](articles/getting-started.md). This page walks through a complete application step by step.
 
 CodeLogic is a modular .NET 11 framework for building structured applications with libraries, plugins, configuration, localization, events, and health checks. This guide takes you from zero to a running application.
 
@@ -6,7 +8,13 @@ CodeLogic is a modular .NET 11 framework for building structured applications wi
 
 ## Installation
 
-Add CodeLogic as a project reference:
+Install the package from nuget.org (5.0 is in preview):
+
+```sh
+dotnet add package CodeLogic --prerelease
+```
+
+Or, to build against a local clone, add a project reference:
 
 ```xml
 <ItemGroup>
@@ -107,8 +115,8 @@ The runtime chooses one complete framework config file:
 
 | Condition | File loaded |
 |-----------|-------------|
-| `DEBUG` build or debugger attached | `CodeLogic.Development.json` |
-| Release build without debugger | `CodeLogic.json` |
+| Environment `Development` (`DOTNET_ENVIRONMENT`, `ASPNETCORE_ENVIRONMENT` or `CODELOGIC_ENVIRONMENT`), or `UseDevelopmentConfig = true` | `CodeLogic.Development.json` |
+| Anything else (an attached debugger alone does not count) | `CodeLogic.json` |
 
 `CodeLogic.Development.json` is a full replacement file, not an overlay or merge. If a section is omitted there, it falls back to the model's default values, not to values from `CodeLogic.json`.
 

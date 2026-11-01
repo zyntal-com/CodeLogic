@@ -233,9 +233,14 @@ var context = new LibraryContext
 
 ## Development vs Production Behavior
 
-The framework selects `CodeLogic.Development.json` when:
-- A debugger is attached at runtime (`Debugger.IsAttached`), OR
-- The build is a `DEBUG` build (`#if DEBUG`)
+The framework selects `CodeLogic.Development.json` (when the file exists) when:
+- `CodeLogicOptions.UseDevelopmentConfig` is `true`, OR
+- it is `null` (the default) and the environment is `Development`: the first set variable of
+  `CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` and `ASPNETCORE_ENVIRONMENT` is `Development`.
+
+An attached debugger or a `DEBUG` build no longer selects it, so attaching a debugger to a production
+process never changes its configuration. Set `DOTNET_ENVIRONMENT=Development` in your launch profile
+(ASP.NET Core templates already set `ASPNETCORE_ENVIRONMENT`) or set `UseDevelopmentConfig = true`.
 
 **Production `CodeLogic.json`** (quiet defaults):
 
@@ -294,15 +299,20 @@ The framework logger always outputs startup info to console, independently of th
 
 ## Centralized Debug Log
 
-When `CentralizedDebugLog = true`, all library loggers also append to a single shared debug log file. This is useful for correlating events across components in production without maintaining separate file handles.
+When `centralizedDebugLog` is `true`, the framework, application and library loggers also append every
+entry (all levels) to one shared debug log. This is useful for correlating events across components.
 
 ```json
 {
   "logging": {
     "centralizedDebugLog": true,
-    "centralizedLogsPath": "C:/Logs/myapp-debug.log"
+    "centralizedLogsPath": "C:/Logs/myapp-debug"
   }
 }
 ```
 
-When `centralizedLogsPath` is null, the log is written to `{FrameworkRoot}/Framework/logs/debug.log`.
+`centralizedLogsPath` is a **directory**; entries go to `{centralizedLogsPath}/yyyy/MM/dd/debug_all.log`.
+When it is null, the runtime uses `{FrameworkRoot}/Framework/logs/debug`; a relative path is resolved
+against the framework root. `enableDebugMode` is not required (it is passed on to `LoggingOptions` for
+components that want a debug flag). Loggers built by hand with `LoggingOptions` must set
+`CentralizedLogsPath` themselves, or use `LoggingConfig.ToLoggingOptions(frameworkRoot)`.

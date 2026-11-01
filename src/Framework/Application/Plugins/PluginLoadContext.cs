@@ -25,8 +25,19 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 {
     private static readonly string HostAssemblyName = typeof(PluginLoadContext).Assembly.GetName().Name!;
 
-    private readonly AssemblyDependencyResolver _resolver;
+    private readonly AssemblyDependencyResolver? _resolver;
     private readonly HashSet<string> _shared;
+
+    /// <summary>Empty context for an in-process plugin: no assembly path, resolves nothing itself.</summary>
+    private PluginLoadContext(string name)
+        : base(name: name, isCollectible: true)
+    {
+        _resolver = null;
+        _shared = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { HostAssemblyName };
+    }
+
+    /// <summary>The sentinel context recorded for a plugin registered with <c>RegisterInProcessPluginAsync</c>.</summary>
+    internal static PluginLoadContext CreateInProcess(string pluginId) => new($"in-process:{pluginId}");
 
     /// <summary>Creates a new plugin load context for the assembly at the specified path.</summary>
     /// <param name="pluginPath">The plugin's main assembly.</param>
@@ -52,14 +63,14 @@ public sealed class PluginLoadContext : AssemblyLoadContext
         if (IsShared(assemblyName))
             return null;
 
-        var path = _resolver.ResolveAssemblyToPath(assemblyName);
+        var path = _resolver?.ResolveAssemblyToPath(assemblyName);
         return path != null ? LoadFromAssemblyPath(path) : null;
     }
 
     /// <inheritdoc />
     protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
     {
-        var path = _resolver.ResolveUnmanagedDllToPath(unmanagedDllName);
+        var path = _resolver?.ResolveUnmanagedDllToPath(unmanagedDllName);
         return path != null ? LoadUnmanagedDllFromPath(path) : IntPtr.Zero;
     }
 }

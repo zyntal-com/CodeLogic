@@ -25,8 +25,19 @@ public abstract class ConfigModelBase
             .Select(r => r.ErrorMessage ?? "Unknown validation error")
             .ToList();
 
-        return ConfigValidationResult.Invalid(errors);
+        // Field-scoped errors use the schema path of the member (top-level properties: camelCase or [JsonPropertyName]).
+        var fieldErrors = results
+            .SelectMany(r => r.MemberNames.Select(member => new ConfigFieldError(
+                FieldPath(member), r.ErrorMessage ?? "Unknown validation error")))
+            .ToList();
+
+        return ConfigValidationResult.Invalid(fieldErrors, errors);
     }
+
+    private string FieldPath(string member) =>
+        GetType().GetProperty(member) is { } prop
+            ? ConfigSchemaBuilder.JsonName(prop)
+            : System.Text.Json.JsonNamingPolicy.CamelCase.ConvertName(member);
 }
 
 /// <summary>
@@ -48,6 +59,12 @@ public sealed class ConfigSectionAttribute : Attribute
     /// Default: 1.
     /// </summary>
     public int Version { get; init; } = 1;
+
+    /// <summary>
+    /// Optional description of the section, returned as <see cref="ConfigSchema.Description"/> and
+    /// <see cref="ConfigSectionInfo.Description"/> for admin UIs.
+    /// </summary>
+    public string? Description { get; init; }
 
     /// <summary>
     /// Initializes the attribute with a section name.

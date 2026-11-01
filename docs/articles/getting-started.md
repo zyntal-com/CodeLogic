@@ -1,10 +1,20 @@
 # Getting Started
 
+> For a longer, step-by-step walkthrough of a complete application, see [Getting Started in Depth](../getting-started.md).
+
 This guide walks you through installing CodeLogic 5, understanding the boot flow, and writing your first library and application.
 
 ---
 
 ## Installation
+
+Install the package from nuget.org (5.0 is in preview):
+
+```sh
+dotnet add package CodeLogic --prerelease
+```
+
+Or, to build against a local clone, add a project reference:
 
 ```xml
 <ItemGroup>
@@ -66,7 +76,7 @@ Use `--generate-configs-force` to overwrite existing config files with defaults.
 
 ## Development Config
 
-`CodeLogic.Development.json` is loaded instead of `CodeLogic.json` when running in a `DEBUG` build or with a debugger attached.
+`CodeLogic.Development.json` is loaded instead of `CodeLogic.json` when the environment is `Development` (`DOTNET_ENVIRONMENT`, `ASPNETCORE_ENVIRONMENT` or `CODELOGIC_ENVIRONMENT`) or `CodeLogicOptions.UseDevelopmentConfig` is `true`. An attached debugger alone does not switch files.
 
 It is a full replacement file, not an overlay. Keep the full schema in that file and add it to `.gitignore`.
 

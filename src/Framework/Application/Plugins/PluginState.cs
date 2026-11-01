@@ -7,7 +7,10 @@ namespace CodeLogic.Framework.Application.Plugins;
 /// </summary>
 public enum PluginState
 {
-    /// <summary>Found on disk (by <see cref="PluginManager.DiscoverAsync"/>) but not yet loaded into memory.</summary>
+    /// <summary>
+    /// Found on disk but not yet loaded into memory. <see cref="PluginManager"/> never assigns it
+    /// (<see cref="PluginManager.DiscoverAsync"/> returns paths); available to plugins and hosts that track it themselves.
+    /// </summary>
     Discovered,
 
     /// <summary>Assembly loaded into an isolated <c>PluginLoadContext</c> and the plugin instance created.</summary>

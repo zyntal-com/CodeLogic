@@ -39,19 +39,22 @@ public class LoggingOptions
     public LogLevel GlobalLevel { get; set; } = LogLevel.Warning;
 
     /// <summary>
-    /// When true, enables verbose debug output mode. Default: false.
+    /// Debug flag for components that want one. <see cref="Logger"/> does not read it; it is no longer
+    /// required for <see cref="CentralizedDebugLog"/>. Default: false.
     /// </summary>
     public bool EnableDebugMode { get; set; } = false;
 
     /// <summary>
-    /// When true, all component loggers also write to a shared centralized debug log file.
+    /// When true (and <see cref="CentralizedLogsPath"/> is set), every logger using these options also
+    /// writes all of its entries, at every level, to <c>{CentralizedLogsPath}/yyyy/MM/dd/debug_all.log</c>.
     /// Default: false.
     /// </summary>
     public bool CentralizedDebugLog { get; set; } = false;
 
     /// <summary>
-    /// Override path for the centralized debug log file.
-    /// When null, defaults to <c>{FrameworkRoot}/Framework/logs/debug.log</c>.
+    /// Directory of the centralized debug log. The runtime sets it to
+    /// <c>{FrameworkRoot}/Framework/logs/debug</c> when <c>logging.centralizedLogsPath</c> is null; options
+    /// built by hand must set it, or nothing is written.
     /// </summary>
     public string? CentralizedLogsPath { get; set; }
 

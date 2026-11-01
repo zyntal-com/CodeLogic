@@ -159,6 +159,16 @@ localization/
 
 ---
 
+## Template generation
+
+During configuration the framework writes a template file for every registered model and supported
+culture that has no file yet (existing files are never overwritten). Set
+`localization.autoGenerateTemplates` to `false` in `CodeLogic.json` to stop that for the application,
+libraries and plugins (plugins follow it unless `PluginOptions.GenerateLocalizationTemplates` is set):
+nothing is written, and a missing culture uses the model's built-in default strings in memory.
+
+---
+
 ## Reload Support
 
 Localization files can be reloaded at runtime without a restart. This is always safe because strings are pure data:
@@ -167,7 +177,9 @@ Localization files can be reloaded at runtime without a restart. This is always 
 await context.Localization.ReloadAllAsync(supportedCultures);
 ```
 
-Subscribe to `LocalizationReloadedEvent` to react:
+After a successful `ReloadAllAsync`, the framework publishes `LocalizationReloadedEvent` with the
+component's ID (library ID, application ID or plugin ID) for localization managers it created.
+Subscribe to react:
 
 ```csharp
 context.Events.Subscribe<LocalizationReloadedEvent>(e =>

@@ -5,8 +5,28 @@ namespace CodeLogic.Framework.Application.Plugins;
 /// </summary>
 public sealed class PluginOptions
 {
-    /// <summary>Base directory where plugin folders live. Default: {FrameworkRoot}/Plugins</summary>
-    public string PluginsDirectory { get; set; } = "CodeLogic/Plugins";
+    /// <summary>The default value of <see cref="PluginsDirectory"/>, meaning <c>{FrameworkRoot}/Plugins</c>.</summary>
+    public const string DefaultPluginsDirectory = "CodeLogic/Plugins";
+
+    /// <summary>
+    /// Base directory where plugin folders live. Default: <c>{FrameworkRoot}/Plugins</c>.
+    /// <para>
+    /// The default value follows the initialized runtime's framework root
+    /// (<see cref="CodeLogicOptions.GetPluginsPath"/>); before initialization it is
+    /// <c>{AppContext.BaseDirectory}/CodeLogic/Plugins</c>. Any other relative path is resolved against
+    /// <see cref="AppContext.BaseDirectory"/>, never the current working directory. Plugins run with the host's
+    /// permissions, so this directory must be writable only by the account that deploys them (more so with
+    /// <see cref="WatchForChanges"/>). <see cref="PluginManager.PluginsDirectory"/> reports the resolved path.
+    /// </para>
+    /// </summary>
+    public string PluginsDirectory { get; set; } = DefaultPluginsDirectory;
+
+    /// <summary>
+    /// Whether loading a plugin writes missing localization template files. <see langword="null"/> (default)
+    /// follows <c>localization.autoGenerateTemplates</c> of the initialized runtime (true when there is none).
+    /// When false, missing cultures use the models' built-in strings in memory.
+    /// </summary>
+    public bool? GenerateLocalizationTemplates { get; set; }
 
     /// <summary>Enable auto-reload when plugin DLL changes on disk.</summary>
     public bool EnableHotReload { get; set; } = true;
