@@ -48,7 +48,7 @@ public sealed class PluginManifest
     public required string Version { get; init; }   // "1.0.0"
     public string? Description         { get; init; }
     public string? Author              { get; init; }
-    public string? MinFrameworkVersion { get; init; }   // informational
+    public string? MinFrameworkVersion { get; init; }   // enforced: newer than the running CodeLogic = not loaded
 }
 ```
 

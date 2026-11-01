@@ -84,7 +84,7 @@ var bus    = CodeLogic.CodeLogic.GetEventBus();
 
 // Show where the log file is so the user knows where to look
 var logFile = Path.Combine(
-    Path.GetFullPath("data/app/logs"),
+    CodeLogic.CodeLogic.GetOptions().GetApplicationLogsPath(),
     "application.log");
 
 Console.WriteLine($"\nMachine : {CodeLogicEnvironment.MachineName}");
@@ -137,8 +137,8 @@ while (running)
 
         case ConsoleKey.L:
             // Write one entry at every log level.
-            // With debugger (Development.json): ALL levels write to disk
-            // Without debugger (CodeLogic.json): only Warning+ writes to disk
+            // Development environment (Development.json): ALL levels write to disk
+            // Otherwise (CodeLogic.json): only Warning+ writes to disk
             Console.WriteLine("\n  Writing all log levels to application.log...");
             DemoApplication.LogAllLevels(ctx, "Demo");
             Console.WriteLine($"  Done. Check: {logFile}");
@@ -199,7 +199,8 @@ static async Task LoadInProcessPluginAsync(PluginManager manager, IPlugin plugin
         ?? throw new InvalidOperationException("Application context not available.");
 
     // Build a PluginContext that reuses the app's paths/services
-    var pluginDir = Path.Combine("data/plugins", plugin.Manifest.Id);
+    // PluginsDirectory is "data/plugins" resolved against the app base directory (not the working directory).
+    var pluginDir = Path.Combine(manager.PluginsDirectory, plugin.Manifest.Id);
     Directory.CreateDirectory(pluginDir);
 
     var pluginCtx = new PluginContext

@@ -19,7 +19,9 @@ public sealed class ConfigurationManager : IConfigurationManager
     private readonly string _baseDirectory;
     private readonly ConcurrentDictionary<Type, ConfigModelBase> _loaded = new();   // effective values
     private readonly ConcurrentDictionary<Type, SectionState> _state = new();       // file vs effective snapshot
-    private readonly Dictionary<Type, string> _registered = []; // Type → subConfigName
+    // Type → subConfigName. Copy-on-write: replaced (never mutated) under _registerGate, read without locking.
+    private volatile Dictionary<Type, string> _registered = [];
+    private readonly Lock _registerGate = new();
     private readonly ConcurrentDictionary<string, string> _knownContent = new(Utilities.PathComparison.Comparer); // path → hash
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly Lock _notifyGate = new();
@@ -37,6 +39,11 @@ public sealed class ConfigurationManager : IConfigurationManager
     };
 
     internal static JsonSerializerOptions JsonOptions => _jsonOptions;
+
+    /// <summary>Mode of config files written on Unix: read/write for the owner only (0600).</summary>
+    internal const UnixFileMode OwnerOnlyFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <inheritdoc />
     public event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
@@ -61,9 +68,20 @@ public sealed class ConfigurationManager : IConfigurationManager
     }
 
     /// <inheritdoc />
+    /// <exception cref="ArgumentException">
+    /// <paramref name="subConfigName"/> is not a valid file-name segment (path separators, <c>..</c>,
+    /// characters invalid in file names, leading/trailing whitespace or a trailing dot).
+    /// </exception>
     public void Register<T>(string? subConfigName = null) where T : ConfigModelBase, new()
     {
-        _registered[typeof(T)] = subConfigName ?? string.Empty;
+        if (!string.IsNullOrEmpty(subConfigName))
+            Utilities.PathSegment.ThrowIfInvalid(subConfigName, "config section name", nameof(subConfigName));
+
+        lock (_registerGate)
+        {
+            Dictionary<Type, string> next = new(_registered) { [typeof(T)] = subConfigName ?? string.Empty };
+            _registered = next;
+        }
     }
 
     /// <inheritdoc />
@@ -259,14 +277,16 @@ public sealed class ConfigurationManager : IConfigurationManager
     /// <inheritdoc />
     public IReadOnlyList<ConfigSectionInfo> GetSections()
     {
-        List<ConfigSectionInfo> result = [with(capacity: _registered.Count)];
-        foreach (var (type, subName) in _registered)
+        var registered = _registered;
+        List<ConfigSectionInfo> result = [with(capacity: registered.Count)];
+        foreach (var (type, subName) in registered)
         {
             var path = GetFilePath(type);
             result.Add(new ConfigSectionInfo
             {
                 SectionName = subName,
                 Title = type.Name,
+                Description = type.GetCustomAttribute<ConfigSectionAttribute>()?.Description,
                 FilePath = path,
                 FileExists = File.Exists(path),
                 IsLoaded = _loaded.ContainsKey(type)
@@ -343,10 +363,16 @@ public sealed class ConfigurationManager : IConfigurationManager
             // Preserve any masked string secrets by copying from the existing loaded instance.
             if (previous is not null)
             {
-                PreserveMaskedSecrets(type, previous, deserialized, maskErrors);
+                PreserveMaskedSecrets(type, previous, deserialized, "", maskErrors);
                 if (maskErrors.Count > 0)
                     return ConfigValidationResult.Invalid(maskErrors);
             }
+
+            // Never persist the placeholder: any mask left now could not be paired with a stored value.
+            List<ConfigFieldError> unpaired = [];
+            FindRemainingMasks(JsonSerializer.SerializeToNode(deserialized, type, _jsonOptions), "", unpaired);
+            if (unpaired.Count > 0)
+                return ConfigValidationResult.Invalid(unpaired, unpaired.Select(e => $"'{e.Path}' {e.Message}"));
 
             var prepared = Prepare(type, StripRuntimeOverrides(type, deserialized));
             if (!prepared.Validation.IsValid)
@@ -667,7 +693,17 @@ public sealed class ConfigurationManager : IConfigurationManager
         var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
+            // Config files hold secrets in clear text: on Unix the temp file is created owner-only
+            // (0600) and the rename keeps that mode, whatever the process umask. Windows inherits the
+            // directory's ACL.
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+            if (!OperatingSystem.IsWindows())
+                options.UnixCreateMode = OwnerOnlyFileMode;
+            await using (var stream = new FileStream(tmp, options))
+            await using (var writer = new StreamWriter(stream, Utf8NoBom))
+            {
+                await writer.WriteAsync(json.AsMemory(), ct).ConfigureAwait(false);
+            }
             RememberContent(path, json);
             File.Move(tmp, path, overwrite: true);
         }
@@ -698,32 +734,33 @@ public sealed class ConfigurationManager : IConfigurationManager
     internal Type ResolveTypeForSection(string sectionName)
     {
         var key = sectionName ?? string.Empty;
-        foreach (var (type, subName) in _registered)
+        var registered = _registered;
+        foreach (var (type, subName) in registered)
         {
             if (string.Equals(subName, key, StringComparison.Ordinal))
                 return type;
         }
         throw new InvalidOperationException(
-            $"No config registered for section '{key}'. Known sections: {string.Join(", ", _registered.Values.Select(s => $"'{s}'"))}");
+            $"No config registered for section '{key}'. Known sections: {string.Join(", ", registered.Values.Select(s => $"'{s}'"))}");
     }
 
     /// <summary>
     /// Walk <paramref name="incoming"/> and replace any string property that
     /// equals <see cref="ConfigField.SecretMask"/> with the corresponding value
-    /// from <paramref name="previous"/>. Recurses into nested objects,
-    /// <c>Dictionary&lt;string,X&gt;</c> entries and <c>List&lt;X&gt;</c> entries
-    /// (see <see cref="PairListEntries"/>). Masked entries of a list of strings are restored by
-    /// position; when the list length changed they cannot be paired safely and an error is added
-    /// to <paramref name="errors"/> instead.
+    /// from <paramref name="previous"/>. Recurses into nested objects, string-keyed dictionaries
+    /// (<c>Dictionary</c>, <c>IDictionary</c>, <c>IReadOnlyDictionary</c>; entries paired by key) and
+    /// lists or arrays of objects (see <see cref="PairListEntries"/>). Masked entries of a list of strings
+    /// are restored by position; when the list length changed they cannot be paired safely and an error
+    /// is added to <paramref name="errors"/> instead. Masks that cannot be paired at all are left in place
+    /// and rejected by <see cref="FindRemainingMasks"/>.
     /// </summary>
-    private static void PreserveMaskedSecrets(Type type, object previous, object incoming, List<string> errors)
+    private static void PreserveMaskedSecrets(Type type, object previous, object incoming, string path, List<string> errors)
     {
-        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0);
-
-        foreach (var prop in props)
+        foreach (var prop in ConfigSchemaBuilder.EditableProperties(type))
         {
             var pt = prop.PropertyType;
+            var jsonName = ConfigSchemaBuilder.JsonName(prop);
+            var fieldPath = path.Length == 0 ? jsonName : $"{path}.{jsonName}";
 
             if (pt == typeof(string))
             {
@@ -736,69 +773,101 @@ public sealed class ConfigurationManager : IConfigurationManager
                 continue;
             }
 
+            if (pt.IsValueType) continue;
+
             if (ConfigSchemaBuilder.IsListOfString(pt))
             {
                 if (prop.GetValue(incoming) is System.Collections.IList incomingList)
-                    RestoreMaskedListEntries(prop, prop.GetValue(previous) as System.Collections.IList, incomingList, errors);
+                    RestoreMaskedListEntries(fieldPath, prop.GetValue(previous) as System.Collections.IList, incomingList, errors);
                 continue;
             }
 
-            if (pt.IsClass && pt != typeof(string) && !pt.IsArray)
+            var prevNested = prop.GetValue(previous);
+            var incomingNested = prop.GetValue(incoming);
+            if (prevNested is null || incomingNested is null) continue;
+
+            // Dictionary<string, X> / IDictionary<string, X> / IReadOnlyDictionary<string, X>
+            if (ConfigSchemaBuilder.IsStringKeyedDictionary(pt, out var valueType) && valueType is not null)
             {
-                var prevNested = prop.GetValue(previous);
-                var incomingNested = prop.GetValue(incoming);
-                if (prevNested is null || incomingNested is null) continue;
+                if (prevNested is not System.Collections.IDictionary prevDict
+                    || incomingNested is not System.Collections.IDictionary incomingDict) continue;
 
-                // Dictionary<string, X>
-                if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(Dictionary<,>) &&
-                    pt.GetGenericArguments()[0] == typeof(string))
+                if (valueType == typeof(string))
                 {
-                    var valueType = pt.GetGenericArguments()[1];
-                    var prevDict = (System.Collections.IDictionary)prevNested;
-                    var incomingDict = (System.Collections.IDictionary)incomingNested;
-                    foreach (var key in incomingDict.Keys)
-                    {
-                        if (prevDict.Contains(key))
-                        {
-                            var incomingEntry = incomingDict[key];
-                            var previousEntry = prevDict[key];
-                            if (incomingEntry is not null && previousEntry is not null)
-                                PreserveMaskedSecrets(valueType, previousEntry, incomingEntry, errors);
-                        }
-                    }
+                    foreach (var key in incomingDict.Keys.Cast<object>().ToList())
+                        if (incomingDict[key] is string s && s == ConfigField.SecretMask && prevDict.Contains(key))
+                            incomingDict[key] = prevDict[key];
                     continue;
                 }
 
-                // List<X> of objects
-                if (ConfigSchemaBuilder.IsListOfObjects(pt, out var elementType) && elementType is not null)
-                {
-                    foreach (var (previousEntry, incomingEntry) in PairListEntries(
-                                 elementType, (System.Collections.IList)prevNested, (System.Collections.IList)incomingNested))
-                        PreserveMaskedSecrets(elementType, previousEntry, incomingEntry, errors);
-                    continue;
-                }
+                if (ConfigSchemaBuilder.IsPrimitiveLike(valueType) || valueType.IsEnum) continue;
 
-                PreserveMaskedSecrets(pt, prevNested, incomingNested, errors);
+                foreach (var key in incomingDict.Keys)
+                {
+                    if (!prevDict.Contains(key)) continue;
+                    var incomingEntry = incomingDict[key];
+                    var previousEntry = prevDict[key];
+                    if (incomingEntry is not null && previousEntry is not null)
+                        PreserveMaskedSecrets(valueType, previousEntry, incomingEntry, $"{fieldPath}.{key}", errors);
+                }
+                continue;
             }
+
+            // List<X> / IList<X> / IReadOnlyList<X> / X[] of objects
+            if (ConfigSchemaBuilder.IsListOfObjects(pt, out var elementType) && elementType is not null)
+            {
+                if (prevNested is not System.Collections.IList prevList
+                    || incomingNested is not System.Collections.IList incomingList) continue;
+                foreach (var (previousEntry, incomingEntry, index) in PairListEntries(elementType, prevList, incomingList))
+                    PreserveMaskedSecrets(elementType, previousEntry, incomingEntry, $"{fieldPath}.{index}", errors);
+                continue;
+            }
+
+            if (prevNested is System.Collections.IEnumerable) continue; // other collections: nothing to pair
+
+            PreserveMaskedSecrets(pt, prevNested, incomingNested, fieldPath, errors);
+        }
+    }
+
+    /// <summary>
+    /// Final guard before an admin update is written: reports every string in <paramref name="node"/> that is
+    /// still <see cref="ConfigField.SecretMask"/> after the restore passes. Such a mask belongs to an entry that
+    /// could not be paired with a stored one (a new list or dictionary entry, or a list without a key property
+    /// whose length changed), and saving it would replace the real secret with the placeholder.
+    /// </summary>
+    private static void FindRemainingMasks(JsonNode? node, string path, List<ConfigFieldError> errors)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var (name, child) in obj)
+                    FindRemainingMasks(child, path.Length == 0 ? name : $"{path}.{name}", errors);
+                break;
+            case JsonArray array:
+                for (var i = 0; i < array.Count; i++)
+                    FindRemainingMasks(array[i], $"{path}.{i}", errors);
+                break;
+            case JsonValue when IsMask(node):
+                errors.Add(new ConfigFieldError(path,
+                    "still contains the masked secret placeholder but it cannot be matched to a stored value " +
+                    "(the entry is new, or the list changed and its entries have no Id/Name/Key); send the value in clear text."));
+                break;
         }
     }
 
     /// <summary>
     /// Walks the incoming JSON alongside <paramref name="type"/> and replaces every
     /// <see cref="ConfigField.SecretMask"/> found where a non-string secret
-    /// (<see cref="ConfigSchemaBuilder.IsNonStringScalar"/>, or a list of them) is expected with the stored
-    /// value from <paramref name="previous"/>. Nested objects, dictionaries and lists of objects are paired
+    /// (<see cref="ConfigSchemaBuilder.IsNonStringScalar"/>, or a list or dictionary of them) is expected with the
+    /// stored value from <paramref name="previous"/>. Nested objects, dictionaries and lists of objects are paired
     /// the same way as <see cref="PreserveMaskedSecrets"/>. A mask that cannot be paired with a stored
     /// value adds an error instead.
     /// </summary>
     private static void RestoreMaskedTypedSecrets(Type type, object? previous, JsonObject node, string path, List<string> errors)
     {
-        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0);
-
-        foreach (var prop in props)
+        foreach (var prop in ConfigSchemaBuilder.EditableProperties(type))
         {
-            var jsonName = JsonName(prop);
+            var jsonName = ConfigSchemaBuilder.JsonName(prop);
             if (!node.TryGetPropertyValue(jsonName, out var child) || child is null) continue;
 
             var pt = prop.PropertyType;
@@ -818,7 +887,7 @@ public sealed class ConfigurationManager : IConfigurationManager
 
             if (ConfigSchemaBuilder.IsListOfPrimitive(pt))
             {
-                var elementType = pt.GetGenericArguments()[0];
+                var elementType = ConfigSchemaBuilder.ElementType(pt)!;
                 if (!secret || child is not JsonArray array
                     || !ConfigSchemaBuilder.IsNonStringScalar(elementType)
                     || !array.Any(IsMask)) continue;
@@ -835,15 +904,30 @@ public sealed class ConfigurationManager : IConfigurationManager
                 continue;
             }
 
-            if (!pt.IsClass || pt == typeof(string) || pt.IsArray) continue;
+            if (pt.IsValueType || pt == typeof(string)) continue;
 
-            // Dictionary<string, X>
-            if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(Dictionary<,>) &&
-                pt.GetGenericArguments()[0] == typeof(string))
+            // Dictionary<string, X> / IDictionary<string, X> / IReadOnlyDictionary<string, X>
+            if (ConfigSchemaBuilder.IsStringKeyedDictionary(pt, out var valueType) && valueType is not null)
             {
                 if (child is not JsonObject entries) continue;
-                var valueType = pt.GetGenericArguments()[1];
                 var previousDict = previousValue as System.Collections.IDictionary;
+
+                if (ConfigSchemaBuilder.IsNonStringScalar(valueType))
+                {
+                    if (!secret) continue;
+                    foreach (var entry in entries.ToList())
+                    {
+                        if (!IsMask(entry.Value)) continue;
+                        if (previousDict is not null && previousDict.Contains(entry.Key))
+                            entries[entry.Key] = JsonSerializer.SerializeToNode(previousDict[entry.Key], valueType, _jsonOptions);
+                        else
+                            errors.Add(MaskWithoutValue($"{fieldPath}.{entry.Key}"));
+                    }
+                    continue;
+                }
+
+                if (ConfigSchemaBuilder.IsPrimitiveLike(valueType)) continue; // string values: PreserveMaskedSecrets
+
                 foreach (var entry in entries.ToList())
                 {
                     if (entry.Value is JsonObject entryObject)
@@ -854,7 +938,7 @@ public sealed class ConfigurationManager : IConfigurationManager
                 continue;
             }
 
-            // List<X> of objects
+            // List<X> / IList<X> / IReadOnlyList<X> / X[] of objects
             if (ConfigSchemaBuilder.IsListOfObjects(pt, out var objectType) && objectType is not null)
             {
                 if (child is not JsonArray items) continue;
@@ -869,7 +953,7 @@ public sealed class ConfigurationManager : IConfigurationManager
                 continue;
             }
 
-            if (child is JsonObject nested)
+            if (child is JsonObject nested && !typeof(System.Collections.IEnumerable).IsAssignableFrom(pt))
                 RestoreMaskedTypedSecrets(pt, previousValue, nested, fieldPath, errors);
         }
     }
@@ -881,7 +965,7 @@ public sealed class ConfigurationManager : IConfigurationManager
         if (previous is null) return null;
         if (keyProp is not null)
         {
-            if (item[JsonName(keyProp)] is not JsonValue keyNode || !keyNode.TryGetValue<string>(out var key))
+            if (item[ConfigSchemaBuilder.JsonName(keyProp)] is not JsonValue keyNode || !keyNode.TryGetValue<string>(out var key))
                 return null;
             foreach (var entry in previous)
                 if (entry is not null && keyProp.GetValue(entry) is string existing && existing == key)
@@ -897,22 +981,17 @@ public sealed class ConfigurationManager : IConfigurationManager
     private static string MaskWithoutValue(string path) =>
         $"'{path}' still contains the masked secret placeholder but there is no stored value to keep; send the value in clear text.";
 
-    private static string JsonName(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
-        ?? _jsonOptions.PropertyNamingPolicy?.ConvertName(prop.Name)
-        ?? prop.Name;
-
     private static void RestoreMaskedListEntries(
-        PropertyInfo prop, System.Collections.IList? previous, System.Collections.IList incoming, List<string> errors)
+        string fieldPath, System.Collections.IList? previous, System.Collections.IList incoming, List<string> errors)
     {
         var masked = false;
         foreach (var entry in incoming)
             if (entry is string s && s == ConfigField.SecretMask) { masked = true; break; }
         if (!masked) return;
 
-        if (previous is null || previous.Count != incoming.Count)
+        if (previous is null || previous.Count != incoming.Count || incoming.IsReadOnly)
         {
-            errors.Add($"'{prop.Name}' still contains masked secret entries but its length changed; " +
+            errors.Add($"'{fieldPath}' still contains masked secret entries but its length changed; " +
                        "send every entry in clear text to change the list.");
             return;
         }
@@ -926,9 +1005,10 @@ public sealed class ConfigurationManager : IConfigurationManager
     /// Pairs incoming list entries with the previous entries they replace: by the element's key
     /// property (<c>Id</c>, <c>Name</c>, <c>Key</c> or <c>…Id</c>) when it has one, otherwise by
     /// position, and only when the list length is unchanged — a masked secret must never be
-    /// filled in from a different entry.
+    /// filled in from a different entry. Unpaired entries keep their masks, which
+    /// <see cref="FindRemainingMasks"/> then rejects.
     /// </summary>
-    private static IEnumerable<(object Previous, object Incoming)> PairListEntries(
+    private static IEnumerable<(object Previous, object Incoming, int Index)> PairListEntries(
         Type elementType, System.Collections.IList previous, System.Collections.IList incoming)
     {
         var keyProp = ConfigSchemaBuilder.FindKeyProperty(elementType);
@@ -939,16 +1019,16 @@ public sealed class ConfigurationManager : IConfigurationManager
                 if (entry is not null && keyProp.GetValue(entry) is string key)
                     byKey.TryAdd(key, entry);
 
-            foreach (var entry in incoming)
-                if (entry is not null && keyProp.GetValue(entry) is string key && byKey.TryGetValue(key, out var match))
-                    yield return (match, entry);
+            for (var i = 0; i < incoming.Count; i++)
+                if (incoming[i] is { } entry && keyProp.GetValue(entry) is string key && byKey.TryGetValue(key, out var match))
+                    yield return (match, entry, i);
             yield break;
         }
 
         if (previous.Count != incoming.Count) yield break;
         for (var i = 0; i < incoming.Count; i++)
             if (previous[i] is { } p && incoming[i] is { } n)
-                yield return (p, n);
+                yield return (p, n, i);
     }
 
     private string GetFilePath(Type type)

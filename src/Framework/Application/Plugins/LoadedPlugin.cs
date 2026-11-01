@@ -13,7 +13,10 @@ public sealed class LoadedPlugin
     public required string AssemblyPath { get; init; }
     /// <summary>The isolated assembly load context for this plugin.</summary>
     public required PluginLoadContext LoadContext { get; init; }
-    /// <summary>Weak reference to the load context for GC tracking after unload.</summary>
+    /// <summary>
+    /// Weak reference to the load context, for callers that want to check after unload whether it has been
+    /// collected (drop every other reference to the plugin first). Not read by the framework.
+    /// </summary>
     public WeakReference? WeakReference { get; init; }
     /// <summary>UTC timestamp when the plugin was loaded.</summary>
     public DateTime LoadedAt { get; init; } = DateTime.UtcNow;
@@ -24,4 +27,7 @@ public sealed class LoadedPlugin
     public PluginState State { get; set; } = PluginState.Loaded;
     /// <summary>The exception that caused the plugin to fail, if any.</summary>
     public Exception? FailureException { get; set; }
+
+    /// <summary>True for a plugin registered with <see cref="PluginManager.RegisterInProcessPluginAsync"/> (no own load context, never hot-reloaded).</summary>
+    public bool IsInProcess { get; init; }
 }

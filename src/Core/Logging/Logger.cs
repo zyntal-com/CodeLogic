@@ -55,7 +55,7 @@ public sealed class Logger : ILogger
     public static Task FlushAsync() => LogFileWriter.Shared.FlushAsync();
 
     private bool CentralizedLogEnabled =>
-        _options.EnableDebugMode && _options.CentralizedDebugLog && !string.IsNullOrWhiteSpace(_options.CentralizedLogsPath);
+        _options.CentralizedDebugLog && !string.IsNullOrWhiteSpace(_options.CentralizedLogsPath);
 
     private bool ConsoleEnabled(LogLevel level) =>
         _options.EnableConsoleOutput && level >= _options.ConsoleMinimumLevel;

@@ -8,9 +8,8 @@ name: Dependabot auto-merge
 #                     breaks CI loudly rather than shipping anything.
 #   nuget           - patch and minor only. These go INTO the build output.
 #
-# This repository's suite is 8 tests, a far weaker signal than CodeLogic.Libs' 921,
-# and every library in the ecosystem depends on this package. Widening that suite is
-# the most valuable safety work available here.
+# Every library in the ecosystem depends on this package, so its suite is the gate that
+# protects all of them. Widening that suite is the most valuable safety work available here.
 
 on:
   pull_request:
@@ -27,7 +26,7 @@ jobs:
     steps:
       - name: Fetch update metadata
         id: meta
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,16 +54,28 @@ jobs:
 
           echo "merge=true" >> "$GITHUB_OUTPUT"
 
-      # --auto queues the merge behind pending required checks. GitHub rejects it when a
-      # PR is already green ("clean status") or when the repository has auto-merge
-      # disabled, so fall back to a direct squash - the checks have passed by then.
+      # --auto queues the merge behind the required checks. GitHub rejects it when the PR is
+      # already green ("clean status") or when auto-merge is disabled for the repository. Only
+      # then fall back to a direct merge, and only if every required check has already passed:
+      # this job runs seconds after the PR opens, before Tests reports, so a blind fallback
+      # would merge an untested update.
       - name: Merge
         if: steps.decide.outputs.merge == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
         run: |
-          gh pr merge --auto --squash "$PR" || gh pr merge --squash --delete-branch "$PR"
+          set -uo pipefail
+          if gh pr merge --auto --squash "$PR"; then
+            exit 0
+          fi
+          # gh pr checks exits 0 only when every required check passed (8 = pending, 1 = failed).
+          if gh pr checks "$PR" --required >/dev/null 2>&1; then
+            gh pr merge --squash --delete-branch "$PR"
+          else
+            echo "::notice::auto-merge unavailable and required checks have not all passed - leaving for review"
+            gh pr comment "$PR" --body "Not auto-merged: GitHub refused to queue auto-merge and the required checks have not all passed yet. Merge it normally once they are green."
+          fi
 
       - name: Explain why it was left alone
         if: steps.decide.outputs.merge == 'false'

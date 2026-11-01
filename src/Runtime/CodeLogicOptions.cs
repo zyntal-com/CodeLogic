@@ -55,8 +55,10 @@ public sealed class CodeLogicOptions
     public string[]? GenerateConfigsFor { get; set; } = null; // null = all
 
     /// <summary>
-    /// When true, the process exits after generating configs instead of continuing startup.
+    /// When true (and <see cref="GenerateConfigs"/> is true), <c>StartAsync</c> returns after the Configure
+    /// phase has generated config files instead of starting libraries and the application.
     /// Default: false. Useful for CI pipelines that generate configs and then exit.
+    /// Set by the <c>--exit-after-generate</c> CLI flag.
     /// </summary>
     public bool ExitAfterGenerate { get; set; } = false;
 
@@ -68,6 +70,22 @@ public sealed class CodeLogicOptions
     /// Triggered by the <c>--dry-run</c> CLI flag.
     /// </summary>
     public bool DryRun { get; set; } = false;
+
+    // === Environment ===
+
+    /// <summary>
+    /// Whether to load <c>CodeLogic.Development.json</c> (when it exists) instead of <c>CodeLogic.json</c>.
+    /// <list type="bullet">
+    /// <item><see langword="null"/> (default): only when <see cref="CodeLogicEnvironment.IsDevelopment"/>, i.e. the
+    /// <c>CODELOGIC_ENVIRONMENT</c>, <c>DOTNET_ENVIRONMENT</c> or <c>ASPNETCORE_ENVIRONMENT</c> variable is
+    /// <c>Development</c>.</item>
+    /// <item><see langword="true"/>: always (when the file exists).</item>
+    /// <item><see langword="false"/>: never.</item>
+    /// </list>
+    /// An attached debugger alone does not switch files, so attaching one to a production process never
+    /// changes its configuration.
+    /// </summary>
+    public bool? UseDevelopmentConfig { get; set; }
 
     // === Shutdown ===
 

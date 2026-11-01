@@ -14,6 +14,7 @@ CodeLogic parses command-line arguments during `InitializeAsync()`. CLI flags ov
 | `--generate-configs` | Generate missing config files before startup continues |
 | `--generate-configs-force` | Overwrite existing config files with defaults |
 | `--dry-run` | Run `ConfigureAsync()` only, validate startup inputs, and do not write files |
+| `--exit-after-generate` | Sets `CodeLogicOptions.ExitAfterGenerate`: `StartAsync()` returns after the Configure phase has generated config files, without starting libraries or the application |
 
 ---
 
@@ -167,7 +168,7 @@ await CodeLogic.InitializeAsync(o =>
     o.GenerateConfigs = true;
     o.GenerateConfigsForce = false;
     o.GenerateConfigsFor = null;
-    o.ExitAfterGenerate = false;
+    o.ExitAfterGenerate = false;   // --exit-after-generate
     o.DryRun = false;
 });
 ```

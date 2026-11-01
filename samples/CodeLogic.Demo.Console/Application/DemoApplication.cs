@@ -12,10 +12,10 @@ namespace CodeLogic.Demo.Console.Application;
 // Logging:
 //   context.Logger writes to:  data/app/logs/application.log
 //   Log level controlled by:   CodeLogic.json       → globalLevel (production)
-//                              CodeLogic.Development.json → globalLevel (when debugging)
+//                              CodeLogic.Development.json → globalLevel (development)
 //
-//   With debugger attached → Development.json is used → all levels write to disk
-//   Without debugger       → CodeLogic.json is used   → only Warning+ writes to disk
+//   DOTNET_ENVIRONMENT=Development → Development.json is used → all levels write to disk
+//   Otherwise                      → CodeLogic.json is used   → only Warning+ writes to disk
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class DemoApplication : IApplication

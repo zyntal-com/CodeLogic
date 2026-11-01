@@ -44,6 +44,12 @@ public sealed class LibraryManager : IDisposable
     public bool EnableConfigHotReload { get; set; }
     /// <summary>Quiet period after the last file event before a watched config file is reloaded.</summary>
     public TimeSpan ConfigHotReloadDebounce { get; set; } = TimeSpan.FromMilliseconds(500);
+    /// <summary>
+    /// When true (default), missing localization files are generated from the models' defaults during
+    /// configuration. When false, nothing is written and missing cultures use the built-in strings in memory.
+    /// Set from <c>localization.autoGenerateTemplates</c> in <c>CodeLogic.json</c>.
+    /// </summary>
+    public bool AutoGenerateLocalizationTemplates { get; set; } = true;
 
     /// <summary>Initializes a new library manager with the specified event bus.</summary>
     public LibraryManager(IEventBus eventBus)
@@ -129,6 +135,7 @@ public sealed class LibraryManager : IDisposable
         {
             var library  = new T();
             var manifest = library.Manifest;
+            ValidateLibraryId(manifest);
 
             if (_librariesById.ContainsKey(manifest.Id))
             {
@@ -141,7 +148,8 @@ public sealed class LibraryManager : IDisposable
                 Instance     = library,
                 Manifest     = manifest,
                 AssemblyPath = typeof(T).Assembly.Location,
-                IsOptional   = options?.OptionalAtBoot ?? false
+                IsOptional   = options?.OptionalAtBoot ?? false,
+                Dependencies = CollectDependencies(library)
             }];
             _librariesById[manifest.Id] = library;
 
@@ -172,13 +180,15 @@ public sealed class LibraryManager : IDisposable
 
                     var library  = (ILibrary)Activator.CreateInstance(type)!;
                     var manifest = library.Manifest;
+                    ValidateLibraryId(manifest);
 
                     if (_librariesById.ContainsKey(manifest.Id))
                         throw new InvalidOperationException($"Duplicate library ID '{manifest.Id}'");
 
                     _libraries = [.. _libraries, new LoadedLibrary
                     {
-                        Instance = library, Manifest = manifest, AssemblyPath = path
+                        Instance = library, Manifest = manifest, AssemblyPath = path,
+                        Dependencies = CollectDependencies(library), IsDiscovered = true
                     }];
                     _librariesById[manifest.Id] = library;
                     Console.WriteLine($"  ✓ Discovered: {manifest.Name} v{manifest.Version}");
@@ -254,8 +264,7 @@ public sealed class LibraryManager : IDisposable
                             allowMissingConfigs,
                             (type, section, config) => ApplyConfigOverrides(
                                 loaded.Manifest.Id, section, type, config, configuration, ctx.Logger));
-                        await ctx.Localization.GenerateAllTemplatesAsync(SupportedCultures);
-                        await ctx.Localization.LoadAllAsync(SupportedCultures);
+                        await LoadLocalizationAsync(ctx.Localization, SupportedCultures, AutoGenerateLocalizationTemplates);
                     }
 
                     loaded.Context = ctx;
@@ -760,7 +769,10 @@ public sealed class LibraryManager : IDisposable
             DataDirectory         = dataDir,
             Logger                = logger,
             Configuration         = new ConfigurationManager(libDir),
-            Localization          = new LocalizationManager(locDir, DefaultCulture),
+            Localization          = new LocalizationManager(locDir, DefaultCulture)
+            {
+                Reloaded = () => _eventBus.Publish(new LocalizationReloadedEvent(libraryId))
+            },
             Events                = _eventBus
         };
     }
@@ -924,7 +936,7 @@ public sealed class LibraryManager : IDisposable
 
         visiting.Add(lib.Manifest.Id);
 
-        foreach (var dep in lib.Manifest.Dependencies)
+        foreach (var dep in lib.Dependencies)
         {
             var depLib = libraries.FirstOrDefault(l => l.Manifest.Id == dep.Id);
             if (depLib == null && dep.IsOptional) continue;
@@ -941,7 +953,7 @@ public sealed class LibraryManager : IDisposable
         var errors = new List<string>();
         foreach (var lib in ordered)
         {
-            foreach (var dep in lib.Manifest.Dependencies)
+            foreach (var dep in lib.Dependencies)
             {
                 var found = _libraries.FirstOrDefault(l => l.Manifest.Id == dep.Id);
                 if (found == null)
@@ -981,19 +993,115 @@ public sealed class LibraryManager : IDisposable
     private static string NormalizeId(string id) =>
         id.StartsWith("CL.", StringComparison.OrdinalIgnoreCase) ? $"CL.{id[3..]}" : $"CL.{id}";
 
+    /// <summary>The library ID names its directory and log file, so it must be a single file-name segment.</summary>
+    private static void ValidateLibraryId(LibraryManifest manifest)
+    {
+        if (!PathSegment.IsValid(manifest.Id))
+            throw new InvalidOperationException(
+                $"Library '{manifest.Name}' has an invalid ID '{manifest.Id}': the ID names the library's directory, " +
+                "so it must not be empty or contain path separators, '..', control characters, ':', '*', '?', '\"', " +
+                "'<', '>' or '|', or start or end with whitespace or end with '.'.");
+    }
+
+    /// <summary>
+    /// <see cref="LibraryManifest.Dependencies"/> plus the <see cref="LibraryDependencyAttribute"/>s on the library
+    /// class. When both declare the same ID, the manifest entry wins.
+    /// </summary>
+    internal static IReadOnlyList<LibraryDependency> CollectDependencies(ILibrary library)
+    {
+        var declared = library.Manifest.Dependencies ?? [];
+        var fromAttributes = library.GetType().GetCustomAttributes<LibraryDependencyAttribute>(inherit: true);
+        List<LibraryDependency> all = [.. declared];
+        foreach (var attribute in fromAttributes)
+        {
+            if (!all.Any(d => string.Equals(d.Id, attribute.Id, StringComparison.Ordinal)))
+                all.Add(attribute.ToDependency());
+        }
+        return all;
+    }
+
+    /// <summary>Generates missing localization files (when allowed) and loads every registered culture.</summary>
+    internal static async Task LoadLocalizationAsync(ILocalizationManager localization, IReadOnlyList<string> cultures, bool generateTemplates)
+    {
+        if (generateTemplates)
+        {
+            await localization.GenerateAllTemplatesAsync(cultures).ConfigureAwait(false);
+            await localization.LoadAllAsync(cultures).ConfigureAwait(false);
+        }
+        else if (localization is LocalizationManager manager)
+        {
+            await manager.LoadAllWithoutGeneratingAsync(cultures).ConfigureAwait(false);
+        }
+        else
+        {
+            await localization.LoadAllAsync(cultures, generateIfMissing: false).ConfigureAwait(false);
+        }
+    }
+
     private static Type? FindLibraryType(Assembly assembly) =>
         assembly.GetTypes().FirstOrDefault(t =>
             typeof(ILibrary).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
 
+    /// <summary>
+    /// Resolves a dependency of a discovered library from that library's own folder. Only libraries loaded
+    /// from <c>{FrameworkRoot}/Libraries/CL.*</c> take part (not ones registered by type, whose assembly is
+    /// the host's), the requested name must be a plain assembly name, and the file found must carry that
+    /// assembly name (and public key token, when one was requested). When the request comes from an
+    /// assembly inside a library folder, only that folder is searched.
+    /// </summary>
     private Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
     {
-        var name = new AssemblyName(args.Name);
-        foreach (var lib in _libraries)
+        AssemblyName requested;
+        try { requested = new AssemblyName(args.Name); }
+        catch (Exception ex) when (ex is ArgumentException or FileLoadException) { return null; }
+
+        var libraryDirs = _libraries
+            .Where(l => l.IsDiscovered)
+            .Select(l => Path.GetDirectoryName(l.AssemblyPath))
+            .OfType<string>()
+            .ToList();
+        string? requestingLocation;
+        try { requestingLocation = args.RequestingAssembly?.Location; }
+        catch (NotSupportedException) { requestingLocation = null; } // dynamic assembly
+
+        var path = FindLibraryDependency(requested, libraryDirs, requestingLocation);
+        return path is null ? null : Assembly.LoadFrom(path);
+    }
+
+    /// <summary>The file in one of <paramref name="libraryDirs"/> that is <paramref name="requested"/>, or null. See <see cref="OnAssemblyResolve"/>.</summary>
+    internal static string? FindLibraryDependency(AssemblyName requested, IReadOnlyList<string> libraryDirs, string? requestingLocation)
+    {
+        var simpleName = requested.Name;
+        if (simpleName is null || !PathSegment.IsValid(simpleName)) return null;
+
+        var dirs = libraryDirs
+            .Select(d => Path.TrimEndingDirectorySeparator(Path.GetFullPath(d)))
+            .Distinct(PathComparison.Comparer)
+            .ToList();
+
+        // A request from inside a library folder is answered from that folder only.
+        if (!string.IsNullOrEmpty(requestingLocation))
         {
-            var dir  = Path.GetDirectoryName(lib.AssemblyPath);
-            if (dir == null) continue;
-            var path = Path.Combine(dir, name.Name + ".dll");
-            if (File.Exists(path)) return Assembly.LoadFrom(path);
+            var requestingDir = Path.GetDirectoryName(Path.GetFullPath(requestingLocation));
+            var own = dirs.FirstOrDefault(d => PathComparison.Comparer.Equals(d, requestingDir));
+            if (own is not null) dirs = [own];
+        }
+
+        var wantedToken = requested.GetPublicKeyToken();
+        foreach (var dir in dirs)
+        {
+            var path = Path.GetFullPath(Path.Combine(dir, simpleName + ".dll"));
+            if (!PathComparison.Comparer.Equals(Path.GetDirectoryName(path), dir) || !File.Exists(path))
+                continue;
+
+            AssemblyName candidate;
+            try { candidate = AssemblyName.GetAssemblyName(path); }
+            catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or IOException) { continue; }
+
+            if (!string.Equals(candidate.Name, simpleName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (wantedToken is { Length: > 0 } && !wantedToken.AsSpan().SequenceEqual(candidate.GetPublicKeyToken() ?? []))
+                continue;
+            return path;
         }
         return null;
     }

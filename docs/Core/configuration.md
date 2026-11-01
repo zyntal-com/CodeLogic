@@ -224,6 +224,47 @@ public class AppConfig : ConfigModelBase
 
 When a config fails validation during `LoadAsync`, an exception is thrown with the validation errors listed. This prevents the application from starting with an invalid configuration.
 
+`[ConfigField]`'s `Required`, `Min`, `Max`, `MaxLength` and `AllowedValues` are hints for admin UIs and are
+not enforced on save. Use DataAnnotations or override `Validate()` for rules that must hold. DataAnnotations
+errors on top-level properties are also reported in `ConfigValidationResult.FieldErrors` with the schema path.
+
+Section names passed to `Register<T>(name)` become part of the file name (`config.{name}.json`), so they must
+be a single file-name segment: no `/`, `\`, `..`, control characters, `:`, `*`, `?`, `"`, `<`, `>`, `|`, and
+no leading/trailing whitespace or trailing dot. Anything else throws `ArgumentException`.
+
+---
+
+## Secrets and admin UIs
+
+Mark sensitive properties with `[ConfigField(Secret = true)]`:
+
+```csharp
+public class SmtpServer
+{
+    public string Name { get; set; } = "";                         // key: pairs entries across edits
+    [ConfigField(Secret = true)] public string Password { get; set; } = "";
+}
+```
+
+- **Masking.** `GetSchema(section)` returns `ConfigField.SecretMask` (`••••••••`) instead of every set
+  secret value, whatever its type: strings, numbers, `Guid`s, enums, lists/arrays of them and
+  string-keyed dictionaries of them. `null` and `""` stay visible. `GetSchema(section, includeSecrets: true)`
+  returns the real values; never send that to a browser.
+- **Restoring.** `UpdateSectionAsync` puts the stored value back wherever the client echoed the mask:
+  scalars directly, lists of scalars by position (only while the length is unchanged), dictionaries by key,
+  and entries of lists of objects by their `Id`/`Name`/`Key`/`…Id` property, else by position when the
+  length is unchanged. This works for `List<T>`, `IList<T>`, `IReadOnlyList<T>`, arrays, `Dictionary<,>`,
+  `IDictionary<,>` and `IReadOnlyDictionary<,>` properties.
+- **Never persisted.** A mask that cannot be matched to a stored value (a new entry, or a list without a key
+  property whose length changed) rejects the whole update with a validation error naming the field
+  (`ConfigValidationResult.FieldErrors`); nothing is written. Send that value in clear text. Give list
+  entries a key property so an admin UI can add and remove entries without re-entering every secret.
+- **Clear text on disk.** Masking only affects the admin view. Secret values are stored **in clear text** in
+  `config*.json`. On Linux and macOS, CodeLogic writes config files with mode `0600` (owner read/write
+  only, whatever the umask); on Windows the file inherits the directory's ACL, so restrict the
+  `CodeLogic` directory to the service account. For stronger protection keep secrets out of the file
+  (environment variables, a secret store) and inject them with a runtime override.
+
 ---
 
 ## Code Examples

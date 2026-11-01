@@ -1,6 +1,6 @@
 name: Promote
 
-# Manual publishing (docs/versioning.md). Each major version is a release line:
+# Manual publishing (docs/Reference/versioning.md). Each major version is a release line:
 #
 #   line   integration branch   preview channel     stable channel
 #   5.x    main                 prerelease/5.x      release/5.x
@@ -52,7 +52,7 @@ jobs:
     steps:
       # Push over SSH with the Promote deploy key: it is the ruleset's only bypass actor.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           ssh-key: ${{ secrets.PROMOTE_DEPLOY_KEY }}
