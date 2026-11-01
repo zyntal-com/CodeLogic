@@ -121,7 +121,7 @@ public interface IConfigurationManager
 
 ## Environment Overrides
 
-The framework-level config file (`CodeLogic.json`) has a development variant: `CodeLogic.Development.json`. When running in development mode (DEBUG build or debugger attached), the framework loads `CodeLogic.Development.json` **instead of** `CodeLogic.json`. This is a full replacement — not a merge or overlay — so the development file must be complete.
+The framework-level config file (`CodeLogic.json`) has a development variant: `CodeLogic.Development.json`. When running in development mode (the environment is `Development`, or `CodeLogicOptions.UseDevelopmentConfig = true`; an attached debugger alone does not count), the framework loads `CodeLogic.Development.json` **instead of** `CodeLogic.json`. This is a full replacement — not a merge or overlay — so the development file must be complete.
 
 Use this for local log levels and developer settings that should not be committed to source control:
 

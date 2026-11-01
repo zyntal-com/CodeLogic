@@ -58,7 +58,7 @@ public sealed class PluginManifest
     string Version { get; init; }              // "1.0.0"
     string? Description { get; init; }
     string? Author { get; init; }
-    string? MinFrameworkVersion { get; init; } // "5.0.0" — informational
+    string? MinFrameworkVersion { get; init; } // "5.0.0" — enforced on load/register
 }
 ```
 
@@ -88,12 +88,32 @@ Configure the `PluginManager` on construction:
 ```csharp
 public sealed class PluginOptions
 {
-    string PluginsDirectory { get; set; } = "CodeLogic/Plugins";
+    const string DefaultPluginsDirectory = "CodeLogic/Plugins";
+    string PluginsDirectory { get; set; } = DefaultPluginsDirectory;
     bool EnableHotReload { get; set; } = true;
     bool WatchForChanges { get; set; } = false;      // FileSystemWatcher
     TimeSpan ReloadDebounce { get; set; } = TimeSpan.FromSeconds(1);
+    bool? GenerateLocalizationTemplates { get; set; } // null = follow localization.autoGenerateTemplates
+    ISet<string> SharedAssemblies { get; }
 }
 ```
+
+**Where plugins are loaded from.** `PluginManager.PluginsDirectory` reports the absolute path in use:
+
+- The default value (`CodeLogic/Plugins`) means `{FrameworkRoot}/Plugins` of the initialized runtime
+  (`CodeLogic.GetOptions().GetPluginsPath()`), so a custom `FrameworkRootPath` is followed. Before
+  `InitializeAsync` it is `{AppContext.BaseDirectory}/CodeLogic/Plugins`.
+- Any other relative path is resolved against `AppContext.BaseDirectory`, **never the current working
+  directory**. Absolute paths are used as given.
+
+Plugins run inside the host process with its permissions. Make the plugins directory writable only by
+the account that deploys plugins, especially with `WatchForChanges = true`, which loads any DLL dropped
+there.
+
+**Manifest checks.** A plugin ID must be a single file-name segment (it names the plugin's log file): no
+`/`, `\`, `..` or characters invalid in file names. A set `PluginManifest.MinFrameworkVersion` must be a
+semantic version no newer than the running CodeLogic (`5.0.42-preview` counts as `5.0.42`); otherwise
+`LoadPluginAsync` and `RegisterInProcessPluginAsync` throw `InvalidOperationException`.
 
 ---
 
@@ -138,8 +158,8 @@ public sealed class PluginManager : IAsyncDisposable
 ```csharp
 var pluginManager = new PluginManager(
     eventBus:          CodeLogic.GetEventBus(),
-    options:           new PluginOptions { PluginsDirectory = "CodeLogic/Plugins" },
-    loggingOptions:    CodeLogic.GetConfiguration().Logging.ToLoggingOptions(),
+    options:           new PluginOptions(),   // {FrameworkRoot}/Plugins
+    loggingOptions:    CodeLogic.GetConfiguration().Logging.ToLoggingOptions(CodeLogic.GetOptions().GetFrameworkPath()),
     defaultCulture:    "en-US",
     supportedCultures: new[] { "en-US", "da-DK" }
 );
@@ -178,7 +198,6 @@ Enable `WatchForChanges = true` to automatically reload plugins when their DLL c
 ```csharp
 var options = new PluginOptions
 {
-    PluginsDirectory = "CodeLogic/Plugins",
     EnableHotReload  = true,
     WatchForChanges  = true,
     ReloadDebounce   = TimeSpan.FromSeconds(2)
@@ -213,7 +232,7 @@ The assembly is loaded into its own `PluginLoadContext`. When unloaded, the cont
 
 ### In-process plugins (testing / embedded)
 
-For testing or when you don't need isolation, implement `IPlugin` directly in the host project, run its lifecycle yourself and register it with `RegisterInProcessPluginAsync(plugin, context)` so it takes part in health checks and shutdown. Don't call `LoadPluginAsync` for it.
+For testing or when you don't need isolation, implement `IPlugin` directly in the host project, run its lifecycle yourself and register it with `RegisterInProcessPluginAsync(plugin, context)` so it takes part in health checks and shutdown. Don't call `LoadPluginAsync` for it. Registration also works in single-file apps (no assembly file location is needed); the record has `LoadedPlugin.IsInProcess = true` and is never hot-reloaded.
 
 ---
 

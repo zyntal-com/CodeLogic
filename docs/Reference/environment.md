@@ -12,8 +12,9 @@ public static class CodeLogicEnvironment
     static string MachineName  { get; }   // Environment.MachineName
     static string AppRootPath  { get; }   // AppContext.BaseDirectory
     static string AppVersion   { get; internal set; }  // set during InitializeAsync
-    static bool   IsDebugging  { get; }   // Debugger.IsAttached
-    static bool   IsDevelopment { get; }  // IsDebugging OR #if DEBUG
+    static bool    IsDebugging     { get; }   // Debugger.IsAttached
+    static string? EnvironmentName { get; }   // CODELOGIC_ / DOTNET_ / ASPNETCORE_ENVIRONMENT
+    static bool    IsDevelopment   { get; }   // EnvironmentName == "Development"
 }
 ```
 
@@ -68,31 +69,21 @@ if (CodeLogicEnvironment.IsDebugging)
 
 ### IsDevelopment
 
-`true` when running in development mode:
+`true` when the environment name is `Development` (case-insensitive). The name comes from the first set
+variable of `CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` and `ASPNETCORE_ENVIRONMENT`
+(`CodeLogicEnvironment.EnvironmentName`).
 
-```csharp
-public static bool IsDevelopment
-{
-    get
-    {
-        if (Debugger.IsAttached) return true;
-#if DEBUG
-        return true;
-#else
-        return false;
-#endif
-    }
-}
-```
-
-This is the same logic the framework uses to select the config file:
+Unless `CodeLogicOptions.UseDevelopmentConfig` overrides it, this selects the framework config file:
 
 | Condition | IsDevelopment | Config file loaded |
 |-----------|---------------|--------------------|
-| `dotnet run` (Debug build) | `true` | `CodeLogic.Development.json` |
-| `dotnet run -c Release` | `false` | `CodeLogic.json` |
-| Any build + debugger attached | `true` | `CodeLogic.Development.json` |
-| Release build, no debugger | `false` | `CodeLogic.json` |
+| `DOTNET_ENVIRONMENT=Development` (or `ASPNETCORE_`/`CODELOGIC_ENVIRONMENT`) | `true` | `CodeLogic.Development.json` (if it exists) |
+| No environment variable, or any other value | `false` | `CodeLogic.json` |
+| `UseDevelopmentConfig = true` | n/a | `CodeLogic.Development.json` (if it exists) |
+| `UseDevelopmentConfig = false` | n/a | `CodeLogic.json` |
+
+An attached debugger or a `DEBUG` build does not count as development: attaching a debugger to a
+production process never switches its configuration.
 
 ---
 

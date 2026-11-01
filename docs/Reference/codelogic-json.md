@@ -9,7 +9,7 @@ The framework configuration file lives at `{FrameworkRoot}/Framework/CodeLogic.j
 | File | When loaded |
 |------|-------------|
 | `CodeLogic.json` | Normal production/default runtime config |
-| `CodeLogic.Development.json` | Loaded instead of `CodeLogic.json` in a `DEBUG` build or when a debugger is attached |
+| `CodeLogic.Development.json` | Loaded instead of `CodeLogic.json` when the environment is `Development` (`CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT`), or when `CodeLogicOptions.UseDevelopmentConfig = true`. An attached debugger alone does not switch files |
 
 `CodeLogic.Development.json` is a full replacement file, not an overlay. It must contain every section you want the runtime to use.
 
@@ -81,9 +81,9 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 | `globalLevel` | string | `"Warning"` | Minimum file log level |
 | `enableConsoleOutput` | bool | `false` | Also write logs to console |
 | `consoleMinimumLevel` | string | `"Debug"` | Minimum console log level |
-| `enableDebugMode` | bool | `false` | Enables verbose debug logging features |
-| `centralizedDebugLog` | bool | `false` | Writes library logs to a shared debug file |
-| `centralizedLogsPath` | string? | `null` | Custom centralized log path |
+| `enableDebugMode` | bool | `false` | Debug flag passed on to `LoggingOptions`; CodeLogic's loggers don't read it |
+| `centralizedDebugLog` | bool | `false` | Also write every entry of every component to `{centralizedLogsPath}/yyyy/MM/dd/debug_all.log` |
+| `centralizedLogsPath` | string? | `null` | Directory of the centralized log; `null` = `{FrameworkRoot}/Framework/logs/debug`, relative = under the framework root |
 | `includeMachineName` | bool | `true` | Prefix entries with machine name |
 | `timestampFormat` | string | `"yyyy-MM-dd HH:mm:ss.fff"` | Timestamp output format |
 
@@ -93,7 +93,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 |----------|------|---------|-------------|
 | `defaultCulture` | string | `"en-US"` | Fallback culture |
 | `supportedCultures` | string[] | `["en-US"]` | Cultures to generate and load |
-| `autoGenerateTemplates` | bool | `true` | Generate missing localization templates |
+| `autoGenerateTemplates` | bool | `true` | Generate missing localization templates (application, libraries, plugins). When `false`, nothing is written and missing cultures use the models' built-in strings |
 
 ### `libraries`
 
@@ -109,7 +109,14 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable scheduled health checks |
-| `intervalSeconds` | int | `30` | Time between scheduled health checks |
+| `intervalSeconds` | int | `30` | Time between scheduled health checks; must be > 0 when enabled |
+
+### Validation
+
+The runtime checks the file while loading it and fails `InitializeAsync` (with the reasons in
+`InitializationResult.Message`) when `healthChecks.intervalSeconds <= 0` with health checks enabled,
+`logging.timestampFormat` is empty or not a valid .NET date/time format, `logging.maxFileSizeMb <= 0`
+or `logging.maxRolledFiles < 0`. `CodeLogicConfiguration.Validate()` runs the same checks.
 
 ---
 
