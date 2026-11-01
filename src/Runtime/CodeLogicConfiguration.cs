@@ -1,3 +1,4 @@
+using System.Globalization;
 using CodeLogic.Core.Logging;
 
 namespace CodeLogic;
@@ -23,6 +24,32 @@ public sealed class CodeLogicConfiguration
 
     /// <summary>Scheduled health check settings: enabled flag and interval.</summary>
     public HealthChecksConfig HealthChecks { get; set; } = new();
+
+    /// <summary>
+    /// Checks the values that would otherwise fail later at runtime (on the health timer or the first log
+    /// line). The runtime calls this while loading the file and fails initialization when anything is reported.
+    /// </summary>
+    /// <returns>One message per invalid value; empty when the configuration is usable.</returns>
+    public IReadOnlyList<string> Validate()
+    {
+        List<string> errors = [];
+        if (HealthChecks is { Enabled: true, IntervalSeconds: <= 0 })
+            errors.Add($"healthChecks.intervalSeconds must be greater than 0 (was {HealthChecks.IntervalSeconds}).");
+        if (string.IsNullOrWhiteSpace(Logging.TimestampFormat))
+        {
+            errors.Add("logging.timestampFormat must not be empty.");
+        }
+        else
+        {
+            try { _ = DateTime.Now.ToString(Logging.TimestampFormat, CultureInfo.InvariantCulture); }
+            catch (FormatException) { errors.Add($"logging.timestampFormat '{Logging.TimestampFormat}' is not a valid date/time format."); }
+        }
+        if (Logging.MaxFileSizeMb <= 0)
+            errors.Add($"logging.maxFileSizeMb must be greater than 0 (was {Logging.MaxFileSizeMb}).");
+        if (Logging.MaxRolledFiles < 0)
+            errors.Add($"logging.maxRolledFiles must not be negative (was {Logging.MaxRolledFiles}).");
+        return errors;
+    }
 }
 
 /// <summary>
@@ -89,21 +116,23 @@ public sealed class LoggingConfig
     public string ConsoleMinimumLevel { get; set; } = "Debug";
 
     /// <summary>
-    /// When true, enables verbose debug logging mode for detailed diagnostic output.
+    /// Debug flag passed on to <see cref="LoggingOptions.EnableDebugMode"/>. CodeLogic's own loggers do not
+    /// read it (it is no longer needed for <see cref="CentralizedDebugLog"/>); libraries may use it as a hint.
     /// Default: false.
     /// </summary>
     public bool EnableDebugMode { get; set; } = false;
 
     /// <summary>
-    /// When true, all library loggers write to a shared central debug log file
-    /// in addition to their own log files. Useful for correlating events across components.
-    /// Default: false.
+    /// When true, every framework, application and library logger also writes all of its entries (every
+    /// level) to a shared central debug log, in addition to its own log file. Useful for correlating
+    /// events across components. Default: false.
     /// </summary>
     public bool CentralizedDebugLog { get; set; } = false;
 
     /// <summary>
-    /// Override path for the centralized debug log file. When null, defaults to
-    /// <c>{FrameworkRoot}/Framework/logs/debug.log</c>.
+    /// Directory of the centralized debug log. Entries go to <c>{path}/yyyy/MM/dd/debug_all.log</c>.
+    /// When null, the runtime uses <c>{FrameworkRoot}/Framework/logs/debug</c>; a relative path is resolved
+    /// against the framework root.
     /// </summary>
     public string? CentralizedLogsPath { get; set; }
 
@@ -134,8 +163,26 @@ public sealed class LoggingConfig
         Enum.TryParse<LogLevel>(value, ignoreCase: true, out var level) ? level : fallback;
 
     /// <summary>
+    /// Like <see cref="ToLoggingOptions()"/>, and resolves <see cref="CentralizedLogsPath"/> against
+    /// <paramref name="frameworkRootPath"/>: null becomes <c>{frameworkRootPath}/Framework/logs/debug</c>
+    /// and a relative path is combined with the framework root. The runtime uses this overload.
+    /// </summary>
+    /// <param name="frameworkRootPath">Absolute framework root (<see cref="CodeLogicOptions.GetFrameworkPath"/>).</param>
+    public LoggingOptions ToLoggingOptions(string frameworkRootPath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(frameworkRootPath);
+        var options = ToLoggingOptions();
+        options.CentralizedLogsPath = string.IsNullOrWhiteSpace(CentralizedLogsPath)
+            ? Path.Combine(frameworkRootPath, "Framework", "logs", "debug")
+            : Path.GetFullPath(CentralizedLogsPath, Path.GetFullPath(frameworkRootPath));
+        return options;
+    }
+
+    /// <summary>
     /// Converts this configuration section to a <see cref="LoggingOptions"/> instance
     /// suitable for passing to the <see cref="Core.Logging.Logger"/> constructor.
+    /// <see cref="CentralizedLogsPath"/> is copied as-is; the centralized log needs a path, so use
+    /// <see cref="ToLoggingOptions(string)"/> to get the default one.
     /// </summary>
     public LoggingOptions ToLoggingOptions() => new()
     {
@@ -175,8 +222,9 @@ public sealed class LocalizationConfig
     public List<string> SupportedCultures { get; set; } = ["en-US"];
 
     /// <summary>
-    /// When true, missing localization template files are auto-generated with default strings.
-    /// Default: true.
+    /// When true, missing localization template files are auto-generated with default strings for the
+    /// application, libraries and plugins. When false, nothing is written: a missing culture file falls back
+    /// to the model's built-in strings in memory. Default: true.
     /// </summary>
     public bool AutoGenerateTemplates { get; set; } = true;
 }
@@ -235,7 +283,7 @@ public sealed class HealthChecksConfig
 
     /// <summary>
     /// How often (in seconds) to run scheduled health checks across all libraries and plugins.
-    /// Default: 30.
+    /// Must be greater than 0 when <see cref="Enabled"/> is true. Default: 30.
     /// </summary>
     public int IntervalSeconds { get; set; } = 30;
 }

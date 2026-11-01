@@ -133,7 +133,8 @@ public sealed class HealthReport
     public DateTime GeneratedAt { get; }
 
     public string ToConsoleString();   // colorized console output
-    public string ToJson();            // JSON serialization
+    public string ToJson();            // JSON with messages, machine name and app version
+    public string ToJson(bool includeDetails); // false: overall flag and status levels only
 }
 ```
 
@@ -169,14 +170,10 @@ if (report.OverallStatus == HealthStatusLevel.Unhealthy)
 app.MapGet("/health", async () =>
 {
     var report = await CodeLogic.GetHealthAsync();
-    var statusCode = report.OverallStatus switch
-    {
-        HealthStatusLevel.Healthy   => 200,
-        HealthStatusLevel.Degraded  => 200,
-        HealthStatusLevel.Unhealthy => 503,
-        _ => 500
-    };
-    return Results.Json(report.ToJson(), statusCode: statusCode);
+    // Public endpoint: status levels only. Health messages can contain exception text and connection
+    // details; serve report.ToJson() only to authenticated operators.
+    return Results.Content(report.ToJson(includeDetails: false), "application/json",
+        statusCode: report.IsHealthy ? 200 : 503);
 });
 ```
 

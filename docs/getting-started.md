@@ -107,8 +107,8 @@ The runtime chooses one complete framework config file:
 
 | Condition | File loaded |
 |-----------|-------------|
-| `DEBUG` build or debugger attached | `CodeLogic.Development.json` |
-| Release build without debugger | `CodeLogic.json` |
+| Environment `Development` (`DOTNET_ENVIRONMENT`, `ASPNETCORE_ENVIRONMENT` or `CODELOGIC_ENVIRONMENT`), or `UseDevelopmentConfig = true` | `CodeLogic.Development.json` |
+| Anything else (an attached debugger alone does not count) | `CodeLogic.json` |
 
 `CodeLogic.Development.json` is a full replacement file, not an overlay or merge. If a section is omitted there, it falls back to the model's default values, not to values from `CodeLogic.json`.
 

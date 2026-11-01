@@ -49,9 +49,27 @@ public sealed class HealthReport
     public HealthStatus? Application { get; init; }
 
     /// <summary>
-    /// Serializes the report to indented JSON, suitable for monitoring systems or REST endpoints.
+    /// Serializes the report to indented JSON, including every component's message, the machine name and
+    /// the app version. Messages can contain exception text and connection details: don't serve this to
+    /// unauthenticated callers; use <see cref="ToJson(bool)"/> with <c>includeDetails: false</c> for that.
     /// </summary>
-    public string ToJson() => JsonSerializer.Serialize(new
+    public string ToJson() => ToJson(includeDetails: true);
+
+    /// <summary>
+    /// Serializes the report to indented JSON. With <paramref name="includeDetails"/> false, only the overall
+    /// flag, the timestamp and each component's status level are included (no messages, machine name or app
+    /// version), which is safe for a public health endpoint.
+    /// </summary>
+    public string ToJson(bool includeDetails) => includeDetails ? ToDetailedJson() : JsonSerializer.Serialize(new
+    {
+        isHealthy   = IsHealthy,
+        checkedAt   = CheckedAt,
+        libraries   = Libraries.ToDictionary(k => k.Key, v => new { status = v.Value.Status.ToString() }),
+        plugins     = Plugins.ToDictionary(k => k.Key, v => new { status = v.Value.Status.ToString() }),
+        application = Application == null ? null : new { status = Application.Status.ToString() }
+    }, _jsonOptions);
+
+    private string ToDetailedJson() => JsonSerializer.Serialize(new
     {
         isHealthy   = IsHealthy,
         checkedAt   = CheckedAt,

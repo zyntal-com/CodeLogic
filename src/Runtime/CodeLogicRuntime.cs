@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Events;
@@ -39,6 +38,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     private StartupParameterStore? _startupParameters;
     private System.Threading.Timer? _healthTimer;
     private bool _initialized;
+    private bool _stopped;
     private bool _shutdownRegistered;
     private ConsoleCancelEventHandler? _cancelKeyHandler;
     private EventHandler? _processExitHandler;
@@ -64,6 +64,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             if (cli.GenerateConfigsForce)       _options.GenerateConfigsForce = true;
             if (cli.GenerateConfigsFor != null) _options.GenerateConfigsFor = cli.GenerateConfigsFor;
             if (cli.DryRun)                     _options.DryRun = true;
+            if (cli.ExitAfterGenerate)          _options.ExitAfterGenerate = true;
 
             if (cli.ShowVersion)
             {
@@ -79,7 +80,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 Console.WriteLine($"  Framework    : {_options.GetFrameworkPath()}");
                 Console.WriteLine($"  Application  : {_options.GetApplicationPath()}");
                 Console.WriteLine($"  Libraries    : {_options.GetLibrariesPath()}");
-                Console.WriteLine($"  Development  : {IsDevelopmentMode()}");
+                Console.WriteLine($"  Development  : {UseDevelopmentConfig(_options)}");
                 return InitializationResult.Exit("--info");
             }
 
@@ -88,7 +89,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             var frameworkRoot = _options.GetFrameworkPath();
             var appRoot = _options.GetApplicationPath();
 
-            if (FirstRunManager.IsFirstRun(frameworkRoot))
+            var isFirstRun = FirstRunManager.IsFirstRun(frameworkRoot);
+            if (isFirstRun)
             {
                 Console.WriteLine("\n  First run detected - scaffolding directory structure...");
                 var scaffoldResult = await FirstRunManager.ScaffoldAsync(frameworkRoot, appRoot);
@@ -99,7 +101,6 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             }
 
             await LoadConfigurationAsync();
-            ApplyDebugDefaults();
 
             _frameworkLogger = CreateFrameworkLogger();
             _frameworkLogger.Info("Framework initialized");
@@ -113,10 +114,11 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             var opt = GetOptionsOrThrow();
             _libraryManager = new LibraryManager(_eventBus)
             {
-                LoggingOptions = cfg.Logging.ToLoggingOptions(),
+                LoggingOptions = cfg.Logging.ToLoggingOptions(opt.GetFrameworkPath()),
                 FrameworkRootPath = opt.GetFrameworkPath(),
                 DefaultCulture = cfg.Localization.DefaultCulture,
                 SupportedCultures = cfg.Localization.SupportedCultures,
+                AutoGenerateLocalizationTemplates = cfg.Localization.AutoGenerateTemplates,
                 EnableDependencyResolution = cfg.Libraries.EnableDependencyResolution,
                 LibraryDiscoveryPattern = cfg.Libraries.DiscoveryPattern,
                 EnableConfigHotReload = cfg.Libraries.ConfigHotReload.Enabled,
@@ -125,6 +127,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             _frameworkLogger.Info("Library manager created - ready for Libraries.LoadAsync<T>()");
 
             _initialized = true;
+            _stopped = false;
 
             if (_options.HandleShutdownSignals && !_shutdownRegistered)
             {
@@ -146,7 +149,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
             }
 
-            return InitializationResult.Succeeded(runHealthCheck: cli.ShowHealth);
+            return InitializationResult.Succeeded(isFirstRun: isFirstRun, runHealthCheck: cli.ShowHealth);
         }
         catch (Exception ex)
         {
@@ -261,6 +264,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
                 return;
             }
 
+            _stopped = false;
+
             if (_libraryManager != null)
             {
                 await _libraryManager.InitializeAllAsync();
@@ -328,11 +333,19 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
     /// <summary>
     /// Gracefully stops the application, plugins, and all libraries in reverse order.
     /// </summary>
+    /// <remarks>
+    /// Runs once per start: a second call (for example the process-exit handler after an explicit
+    /// <c>StopAsync</c>) returns without calling <see cref="IApplication.OnStopAsync"/> again.
+    /// <see cref="StartAsync"/> or a new initialization re-arms it.
+    /// </remarks>
     public async Task StopAsync()
     {
         await _lock.WaitAsync();
         try
         {
+            if (_stopped) return;
+            _stopped = true;
+
             _healthTimer?.Dispose();
             _healthTimer = null;
 
@@ -382,7 +395,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             _healthTimer?.Dispose();
             _healthTimer = null;
 
-            if (_application != null)
+            if (_application != null && !_stopped)
                 try { await _application.OnStopAsync(); } catch { }
 
             // The registered plugin manager belongs to the runtime from SetPluginManager on:
@@ -412,6 +425,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             _application = null;
             _applicationContext = null;
             _initialized = false;
+            _stopped = false;
         }
         finally
         {
@@ -513,20 +527,13 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             ?? throw new InvalidOperationException("CodeLogic startup parameters not available.");
     }
 
-    private void ApplyDebugDefaults()
-    {
-        // No-op. Development mode is handled via CodeLogic.Development.json.
-    }
-
-    private static bool IsDevelopmentMode()
-    {
-        if (Debugger.IsAttached) return true;
-#if DEBUG
-        return true;
-#else
-        return false;
-#endif
-    }
+    /// <summary>
+    /// <see cref="CodeLogicOptions.UseDevelopmentConfig"/> when set, otherwise
+    /// <see cref="CodeLogicEnvironment.IsDevelopment"/> (the environment name is <c>Development</c>).
+    /// An attached debugger alone no longer selects the development file.
+    /// </summary>
+    private static bool UseDevelopmentConfig(CodeLogicOptions options) =>
+        options.UseDevelopmentConfig ?? CodeLogicEnvironment.IsDevelopment;
 
     private ILogger CreateFrameworkLogger()
     {
@@ -535,7 +542,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
         var logsDir = Path.Combine(opts.GetFrameworkPath(), "Framework", "logs");
         Directory.CreateDirectory(logsDir);
 
-        var loggingOpts = config.Logging.ToLoggingOptions();
+        var loggingOpts = config.Logging.ToLoggingOptions(opts.GetFrameworkPath());
         if (loggingOpts.GlobalLevel > LogLevel.Info)
             loggingOpts.GlobalLevel = LogLevel.Info;
 
@@ -552,10 +559,12 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
         var basePath = opts.GetCodeLogicConfigPath();
 
         string configPath;
-        if (IsDevelopmentMode() && File.Exists(devPath))
+        if (UseDevelopmentConfig(opts) && File.Exists(devPath))
         {
             configPath = devPath;
-            var reason = Debugger.IsAttached ? "debugger attached" : "DEBUG build";
+            var reason = opts.UseDevelopmentConfig == true
+                ? "CodeLogicOptions.UseDevelopmentConfig"
+                : $"environment '{CodeLogicEnvironment.EnvironmentName}'";
             Console.WriteLine($"[CodeLogic] Using {Path.GetFileName(devPath)} ({reason})");
         }
         else
@@ -567,7 +576,15 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             throw new FileNotFoundException($"Config not found at: {configPath}");
 
         var json = await File.ReadAllTextAsync(configPath);
-        _config = JsonSerializer.Deserialize<CodeLogicConfiguration>(json, _configJsonOptions) ?? throw new InvalidOperationException($"Failed to deserialize {Path.GetFileName(configPath)}");
+        var config = JsonSerializer.Deserialize<CodeLogicConfiguration>(json, _configJsonOptions)
+            ?? throw new InvalidOperationException($"Failed to deserialize {Path.GetFileName(configPath)}");
+
+        // Fail at startup, not later on a timer or the first log line.
+        var errors = config.Validate();
+        if (errors.Count > 0)
+            throw new InvalidOperationException(
+                $"{Path.GetFileName(configPath)} is invalid: {string.Join("; ", errors)}");
+        _config = config;
     }
 
     private ApplicationContext CreateApplicationContext()
@@ -585,13 +602,14 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
         Directory.CreateDirectory(locDir);
         Directory.CreateDirectory(dataDir);
 
-        var loggingOpts = config.Logging.ToLoggingOptions();
+        var loggingOpts = config.Logging.ToLoggingOptions(opts.GetFrameworkPath());
         var logger = new Core.Logging.Logger(
             "APPLICATION", logDir, loggingOpts.GlobalLevel, loggingOpts);
+        var applicationId = _application!.Manifest.Id;
 
         return new ApplicationContext
         {
-            ApplicationId = _application!.Manifest.Id,
+            ApplicationId = applicationId,
             ApplicationDirectory = appDir,
             ConfigDirectory = appDir,
             LocalizationDirectory = locDir,
@@ -599,7 +617,10 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             DataDirectory = dataDir,
             Logger = logger,
             Configuration = new ConfigurationManager(appDir),
-            Localization = new Core.Localization.LocalizationManager(locDir, config.Localization.DefaultCulture),
+            Localization = new Core.Localization.LocalizationManager(locDir, config.Localization.DefaultCulture)
+            {
+                Reloaded = () => _eventBus.Publish(new LocalizationReloadedEvent(applicationId))
+            },
             Events = _eventBus
         };
     }
@@ -629,8 +650,8 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             await appCtx.Configuration.GenerateAllDefaultsAsync(force: true);
 
         await appCtx.Configuration.LoadAllAsync(generateIfMissing: canGenerateMissingConfigs);
-        await appCtx.Localization.GenerateAllTemplatesAsync(config.Localization.SupportedCultures);
-        await appCtx.Localization.LoadAllAsync(config.Localization.SupportedCultures);
+        await LibraryManager.LoadLocalizationAsync(
+            appCtx.Localization, config.Localization.SupportedCultures, config.Localization.AutoGenerateTemplates);
     }
 
     private static void ReportDryRunConfigActions(ConfigurationManager configuration, bool force)

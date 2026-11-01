@@ -65,6 +65,19 @@ Timestamps, date folders in log paths, and upper-cased library and plugin IDs no
 - **Non-string secrets are masked.** Admin UIs that read `GetSchema` get `ConfigField.SecretMask` for every set secret value, including numbers, `Guid`s and enums. Send the mask back unchanged to keep the stored value.
 - **Culture names are validated.** Localization cultures may contain only ASCII letters, digits, `-` and `_`; anything else throws `ArgumentException`.
 - **`LibraryManager.GetAllLibraries` / `GetLoadedLibraries` return snapshots** instead of live views.
+- **Masks that can't be matched are rejected.** `UpdateSectionAsync` rejects an update that still contains `ConfigField.SecretMask` for a value it cannot pair with a stored one (a new list or dictionary entry, or an entry of a list without an `Id`/`Name`/`Key` property whose length changed). Admin UIs must send such values in clear text; give list entries a key property so entries can be added without re-entering every secret. `ConfigValidationResult.FieldErrors` names the field.
+- **Schema paths use JSON names.** `GetSchema` paths follow `[JsonPropertyName]` and the camelCase policy, and skip `[JsonIgnore]` properties. Only properties with such attributes or leading acronyms (`URLPath` → `urlPath`) change.
+- **Names in file names are validated.** Config section names (`Register<T>(name)`), library IDs and plugin IDs may not contain path separators, `..`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, control characters, or leading/trailing whitespace or a trailing dot.
+- **Config files are `0600` on Unix.** If another account must read a library's `config*.json`, grant it explicitly after CodeLogic writes the file.
+- **Invalid `CodeLogic.json` values fail initialization**: `healthChecks.intervalSeconds <= 0` with health checks enabled, an invalid `logging.timestampFormat`, `logging.maxFileSizeMb <= 0`, `logging.maxRolledFiles < 0`.
+
+### Environment, plugins and logging
+
+- **`CodeLogic.Development.json` needs a Development environment.** It is used only when `DOTNET_ENVIRONMENT`, `ASPNETCORE_ENVIRONMENT` or `CODELOGIC_ENVIRONMENT` is `Development`, or with `CodeLogicOptions.UseDevelopmentConfig = true`. An attached debugger no longer selects it. Add `DOTNET_ENVIRONMENT=Development` to your launch profile (ASP.NET Core profiles already set `ASPNETCORE_ENVIRONMENT`). `CodeLogicEnvironment.IsDevelopment` follows the same rule.
+- **Relative plugin directories resolve against the app.** `PluginOptions.PluginsDirectory` left at its default means `{FrameworkRoot}/Plugins`; any other relative path resolves against `AppContext.BaseDirectory`, not the working directory. Use `PluginManager.PluginsDirectory` to see the path in use, and pass an absolute path if you relied on the working directory.
+- **`MinFrameworkVersion` is enforced.** A plugin requiring a newer CodeLogic is not loaded.
+- **Library dependencies resolve only from discovered library folders.** A library registered by type no longer makes CodeLogic probe the host folder for assemblies missing from the host's `.deps.json`; reference them from the host project instead.
+- **The centralized debug log works without `enableDebugMode`.** With `centralizedDebugLog: true` it is written to `{FrameworkRoot}/Framework/logs/debug/yyyy/MM/dd/debug_all.log` by default; `centralizedLogsPath` is a directory.
 
 ## New in 5.0
 

@@ -8,7 +8,7 @@ namespace CodeLogic.Tests.PluginFixture;
 /// <summary>
 /// Plugin whose behavior is driven by <c>behavior.txt</c> next to its assembly:
 /// <c>id=...</c>, <c>fail=configure|initialize|start|unload|dispose</c>, <c>startDelayMs=...</c>,
-/// <c>reenter=configure|initialize|start|unload</c>.
+/// <c>reenter=configure|initialize|start|unload</c>, <c>minFramework=...</c> (manifest MinFrameworkVersion).
 /// Every lifecycle call is appended to <c>calls.log</c> in the same folder. In the <c>reenter</c> step
 /// the plugin awaits <see cref="IEventBus.PublishAsync{T}"/> of a <see cref="ComponentAlertEvent"/>
 /// (AlertType "reenter"), so a test handler can call back into the manager from inside the callback.
@@ -35,7 +35,8 @@ public sealed class FixturePlugin : IPlugin
         {
             Id = _behavior.GetValueOrDefault("id", "fixture"),
             Name = "Fixture",
-            Version = "1.0.0"
+            Version = "1.0.0",
+            MinFrameworkVersion = _behavior.GetValueOrDefault("minFramework")
         };
     }
 

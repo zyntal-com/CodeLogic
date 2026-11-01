@@ -146,7 +146,9 @@ and either version cannot be parsed, dependency validation fails instead of skip
 
 ## LibraryDependencyAttribute
 
-Alternative to declaring dependencies in the manifest — use attributes on the class:
+Alternative to declaring dependencies in the manifest — use attributes on the class. They take part in
+startup ordering and `MinVersion` validation exactly like `Manifest.Dependencies`; when both declare the
+same ID, the manifest entry wins. `LoadedLibrary.Dependencies` shows the merged list.
 
 ```csharp
 [LibraryDependency(Id = "CL.Data", MinVersion = "5.0.0")]
@@ -162,6 +164,21 @@ public class MailLibrary : ILibrary
     };
 }
 ```
+
+---
+
+## Library IDs and assembly resolution
+
+- **IDs name directories.** `Manifest.Id` becomes the library's folder (`Libraries/CL.{Id}`) and log file, so it
+  must be a single file-name segment: no `/`, `\`, `..`, control characters, `:`, `*`, `?`, `"`, `<`, `>`,
+  `|`, and no leading/trailing whitespace or trailing dot. Registering a library with any other ID throws
+  `InvalidOperationException`.
+- **Dependency resolution for discovered libraries.** When a library loaded from `Libraries/CL.*/` needs an
+  assembly the host does not provide, CodeLogic looks for `{AssemblyName}.dll` in that library's own folder
+  (or, when the requesting assembly is not inside a library folder, in the discovered library folders). The
+  file must carry the requested assembly name and, if one was requested, public key token. Libraries
+  registered by type (`Libraries.LoadAsync<T>()`) are part of the host and resolve through its
+  `.deps.json` like any other host dependency.
 
 ---
 

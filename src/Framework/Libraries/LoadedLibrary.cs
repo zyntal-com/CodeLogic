@@ -11,6 +11,15 @@ public sealed class LoadedLibrary
     public required LibraryManifest Manifest { get; init; }
     /// <summary>Filesystem path the library assembly was loaded from.</summary>
     public required string AssemblyPath { get; init; }
+
+    /// <summary>
+    /// The dependencies used for ordering and validation: <see cref="LibraryManifest.Dependencies"/> plus any
+    /// <see cref="LibraryDependencyAttribute"/> on the library class (the manifest wins for a duplicate ID).
+    /// </summary>
+    public IReadOnlyList<LibraryDependency> Dependencies { get; internal init; } = [];
+
+    /// <summary>True when the library was discovered under <c>Libraries/CL.*</c> and loaded from its own folder.</summary>
+    internal bool IsDiscovered { get; init; }
     /// <summary>Timestamp when the library was loaded.</summary>
     public DateTime LoadedAt { get; init; } = DateTime.UtcNow;
 

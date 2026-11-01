@@ -46,6 +46,9 @@ StopAsync()
   └── (done)
 ```
 
+`StopAsync` runs once per start: a second call (for example the process-exit handler after you called
+`StopAsync` yourself) returns without calling `OnStopAsync` again.
+
 **Key principle:** By the time `OnInitializeAsync` is called on the application, all library services are fully operational. The application can safely call into any library from `OnInitializeAsync` and `OnStartAsync`.
 
 ---

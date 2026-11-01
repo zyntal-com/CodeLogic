@@ -56,6 +56,36 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   SemVer precedence and ignores build metadata for equality. Leading zeros in numeric components and
   signs/whitespace inside components are now rejected, and `ToString()` includes the suffixes.
 - `LibraryManager.GetAllLibraries` and `GetLoadedLibraries` return snapshots instead of live views.
+- **`CodeLogic.Development.json` is chosen by the environment, not a debugger.** It replaces
+  `CodeLogic.json` only when `CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT` is
+  `Development`, or when the new `CodeLogicOptions.UseDevelopmentConfig` is `true`. Attaching a debugger to a
+  production process no longer switches its configuration. `CodeLogicEnvironment.IsDevelopment` follows the
+  same rule (it no longer reports `true` for an attached debugger or a DEBUG build of CodeLogic).
+- **Plugin directories resolve against the app, not the working directory.** The default
+  `PluginOptions.PluginsDirectory` (`CodeLogic/Plugins`) now means `{FrameworkRoot}/Plugins` of the initialized
+  runtime (`GetPluginsPath()`), and any other relative path resolves against `AppContext.BaseDirectory`.
+  A service started from another directory no longer loads plugins from there.
+- **Names used in file names are validated.** `IConfigurationManager.Register<T>(name)` throws
+  `ArgumentException`, and registering a library or loading/registering a plugin throws
+  `InvalidOperationException`, when the section name or manifest ID contains path separators, `..`, control
+  characters, `:`, `*`, `?`, `"`, `<`, `>`, `|`, or leading/trailing whitespace or a trailing dot.
+- **The library assembly resolver is restricted.** It serves a missing dependency only from the folder of a
+  library discovered under `Libraries/CL.*` (the requesting library's own folder when known), only for a plain
+  assembly name, and only when the file carries that name (and public key token, if requested). Libraries
+  registered by type no longer make the resolver probe the host's folder.
+- **`PluginManifest.MinFrameworkVersion` is enforced.** A plugin whose minimum is newer than the running
+  CodeLogic (pre-release builds count as their version) or not a semantic version is not loaded.
+- **An invalid `CodeLogic.json` fails `InitializeAsync`**: `healthChecks.intervalSeconds <= 0` (with health
+  checks enabled), an empty or invalid `logging.timestampFormat`, `logging.maxFileSizeMb <= 0` or
+  `logging.maxRolledFiles < 0`. These used to throw later on the health timer or the first log line.
+- **Config schema paths use JSON names.** `GetSchema` field paths use `[JsonPropertyName]` or the camelCase
+  naming policy (as the file and `UpdateSectionAsync` do) instead of lower-casing the first letter, and
+  `[JsonIgnore]` properties are left out. Paths differ only for such properties (e.g. `URLPath` →
+  `urlPath`, was `uRLPath`).
+- **Config files are created with mode `0600` on Unix** (owner read/write), whatever the umask. Processes
+  running as another user can no longer read them.
+- **The centralized debug log no longer needs `enableDebugMode`.** `centralizedDebugLog: true` alone now
+  writes `{FrameworkRoot}/Framework/logs/debug/yyyy/MM/dd/debug_all.log` (or under `centralizedLogsPath`).
 
 ### Added
 
@@ -67,6 +97,18 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   type (`Assert.Throws<InvalidOperationException>`) need `ThrowsAny` or the new type.
 - `CodeLogicEnvironment.FrameworkVersion`: the CodeLogic assembly's informational version without
   the `+commit` suffix.
+- `CodeLogicOptions.UseDevelopmentConfig` and `CodeLogicEnvironment.EnvironmentName`.
+- `PluginManager.PluginsDirectory` (the resolved absolute path), `PluginOptions.DefaultPluginsDirectory`,
+  `PluginOptions.GenerateLocalizationTemplates` and `LoadedPlugin.IsInProcess`.
+- `LoadedLibrary.Dependencies`: manifest dependencies merged with `[LibraryDependency]` attributes.
+- `HealthReport.ToJson(bool includeDetails)`: `false` returns only the overall flag, timestamp and status
+  levels, for public health endpoints.
+- `CodeLogicConfiguration.Validate()` and `LoggingConfig.ToLoggingOptions(string frameworkRootPath)`, which
+  fills in the default centralized log directory.
+- `ConfigSectionAttribute.Description`, returned as `ConfigSchema.Description` / `ConfigSectionInfo.Description`.
+- `--exit-after-generate` CLI flag (sets `CodeLogicOptions.ExitAfterGenerate`).
+- `GetSchema` handles `Dictionary<string, scalar>` (one `dict` field, secret values masked), arrays, and
+  lists of enums (values and `AllowedValues` as names). `List<Enum>` no longer produces a bogus `capacity` field.
 
 ### Changed
 
@@ -126,6 +168,23 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - **`CodeLogicRuntime.ResetAsync` clears all run state.** It unregisters the CTRL+C / process-exit
   handlers (re-initializing registers them again as configured), drops every event bus subscription
   made during the previous run, and detaches the framework logger.
+- **Masked secrets are never written to disk.** `UpdateSectionAsync` used to save `••••••••` over the real
+  value when a masked secret sat in a list entry that could not be paired with a stored one (a new entry, or
+  an entry of a list without an `Id`/`Name`/`Key` property whose length changed), and skipped `IList<T>`,
+  `IReadOnlyList<T>`, array, `IDictionary<,>` and `IReadOnlyDictionary<,>` properties entirely. Those
+  properties are now restored like `List<T>`/`Dictionary<,>`, and any mask left after restoring rejects the
+  update with a validation error naming the field (`FieldErrors`); nothing is written.
+- `ConfigurationManager.Register` is safe to call concurrently with readers (copy-on-write registrations).
+- **`StopAsync` runs once.** `IApplication.OnStopAsync` (and plugin unload/library stop) no longer run twice
+  when `StopAsync` is called explicitly and again by the process-exit handler. `StartAsync` re-arms it.
+- `RegisterInProcessPluginAsync` works in single-file apps (it no longer builds a load context from the empty
+  `Assembly.Location`), and in-process plugins are never hot-reloaded.
+- `[LibraryDependency]` attributes are honoured for startup ordering and `MinVersion` validation, as documented.
+- `localization.autoGenerateTemplates: false` is honoured: the application, libraries and plugins write no
+  template files and use the models' built-in strings for missing cultures.
+- `LocalizationReloadedEvent` is published after `ReloadAllAsync` on framework-created localization managers.
+- `InitializationResult.IsFirstRun` reports first-run scaffolding.
+- `ConfigModelBase.Validate()` reports DataAnnotations errors on top-level properties in `FieldErrors` too.
 
 ### Documentation
 
@@ -135,6 +194,13 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - The Core, Framework and Reference guides and the in-depth getting-started page are now part of the
   docs site.
 - The web demo's config endpoints carry authentication/authorization guidance.
+- Configuration docs describe secret masking and restore rules, and that secrets are stored **in clear text**
+  in `config*.json` (owner-only mode on Unix; restrict the directory ACL on Windows).
+- `ConfigFieldAttribute.Required`/`Min`/`Max`/`MaxLength`/`AllowedValues`, `LibraryManifest.Description`/`Tags`,
+  `IPlugin.State`, `PluginState.Discovered` and `LoadedPlugin.WeakReference` are documented as hints or
+  informational: the framework does not enforce or read them.
+- The web demo's event endpoints accept local requests only, limit input and never log caller text at
+  Error; its public `/health` returns status levels only (details are local-only).
 
 ### Performance
 

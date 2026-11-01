@@ -9,7 +9,8 @@ public sealed class PluginManifest
 {
     /// <summary>
     /// Unique identifier for this plugin (e.g., "myapp.dashboard", "homepoint.z-wave").
-    /// Used as the key in the PluginManager's internal registry.
+    /// Used as the key in the PluginManager's internal registry and as the plugin's log file name, so it
+    /// must be a single file-name segment (no path separators, <c>..</c> or characters invalid in file names).
     /// </summary>
     public required string Id { get; init; }
 
@@ -37,8 +38,9 @@ public sealed class PluginManifest
 
     /// <summary>
     /// Minimum CodeLogic framework version required to run this plugin (e.g., "5.0.0").
-    /// When set, the PluginManager may validate this against the running framework version.
-    /// Currently informational — enforcement is the plugin author's responsibility.
+    /// When set, <see cref="PluginManager"/> refuses to load or register the plugin if the value is not a
+    /// semantic version or is newer than <see cref="CodeLogicEnvironment.FrameworkVersion"/> (a pre-release
+    /// build such as 5.0.42-preview counts as 5.0.42).
     /// </summary>
     public string? MinFrameworkVersion { get; init; }
 }

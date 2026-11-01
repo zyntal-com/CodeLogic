@@ -100,7 +100,8 @@ static async Task LoadInProcessPluginAsync(PluginManager manager, IPlugin plugin
     var ctx = CodeLogic.CodeLogic.GetApplicationContext()
         ?? throw new InvalidOperationException("Application context not available.");
 
-    var pluginDir = Path.Combine("data/plugins", plugin.Manifest.Id);
+    // PluginsDirectory is "data/plugins" resolved against the app base directory (not the working directory).
+    var pluginDir = Path.Combine(manager.PluginsDirectory, plugin.Manifest.Id);
     Directory.CreateDirectory(Path.Combine(pluginDir, "logs"));
 
     var pluginCtx = new PluginContext

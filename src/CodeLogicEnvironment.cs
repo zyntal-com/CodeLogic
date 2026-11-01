@@ -46,22 +46,28 @@ public static class CodeLogicEnvironment
     public static bool IsDebugging => Debugger.IsAttached;
 
     /// <summary>
-    /// Returns true when running in development mode.
-    /// True if debugger is attached OR if this is a DEBUG build.
-    /// Mirrors the framework's config file selection logic:
-    ///   IsDevelopment = true  → CodeLogic.Development.json
-    ///   IsDevelopment = false → CodeLogic.json
+    /// The environment name from the first set variable of <c>CODELOGIC_ENVIRONMENT</c>,
+    /// <c>DOTNET_ENVIRONMENT</c> and <c>ASPNETCORE_ENVIRONMENT</c>, or <see langword="null"/> when none is set.
     /// </summary>
-    public static bool IsDevelopment
+    public static string? EnvironmentName =>
+        FirstSet("CODELOGIC_ENVIRONMENT", "DOTNET_ENVIRONMENT", "ASPNETCORE_ENVIRONMENT");
+
+    /// <summary>
+    /// True when <see cref="EnvironmentName"/> is <c>Development</c> (case-insensitive).
+    /// Unless <see cref="CodeLogicOptions.UseDevelopmentConfig"/> overrides it, this selects the framework
+    /// config file: <c>CodeLogic.Development.json</c> when true (and the file exists), <c>CodeLogic.json</c>
+    /// otherwise. An attached debugger or a DEBUG build no longer counts as development.
+    /// </summary>
+    public static bool IsDevelopment =>
+        string.Equals(EnvironmentName, "Development", StringComparison.OrdinalIgnoreCase);
+
+    private static string? FirstSet(params ReadOnlySpan<string> names)
     {
-        get
+        foreach (var name in names)
         {
-            if (Debugger.IsAttached) return true;
-#if DEBUG
-            return true;
-#else
-            return false;
-#endif
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
         }
+        return null;
     }
 }

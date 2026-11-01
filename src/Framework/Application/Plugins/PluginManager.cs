@@ -35,6 +35,7 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly LoggingOptions _loggingOptions;
     private readonly string _defaultCulture;
     private readonly IReadOnlyList<string> _supportedCultures;
+    private readonly bool _generateLocalizationTemplates;
     private readonly ConcurrentDictionary<string, LoadedPlugin> _plugins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _reloadDebounce = new(PathComparison.Comparer);
     private readonly Lock _reloadLock = new();
@@ -57,6 +58,15 @@ public sealed class PluginManager : IAsyncDisposable
     /// <summary>Raised when a plugin encounters an error during load, unload, or reload.</summary>
     public event Action<string, Exception>? OnPluginError;
 
+    /// <summary>
+    /// Absolute directory plugins are discovered and watched in, resolved from
+    /// <see cref="PluginOptions.PluginsDirectory"/>: the default (<c>CodeLogic/Plugins</c>) means
+    /// <c>{FrameworkRoot}/Plugins</c> of the initialized runtime (<see cref="CodeLogicOptions.GetPluginsPath"/>),
+    /// and any other relative path is resolved against <see cref="AppContext.BaseDirectory"/>, never the
+    /// current working directory.
+    /// </summary>
+    public string PluginsDirectory { get; }
+
     /// <summary>Initializes a new plugin manager with the specified dependencies.</summary>
     public PluginManager(
         IEventBus eventBus,
@@ -70,8 +80,10 @@ public sealed class PluginManager : IAsyncDisposable
         _loggingOptions    = loggingOptions ?? new LoggingOptions();
         _defaultCulture    = defaultCulture;
         _supportedCultures = supportedCultures ?? ["en-US"];
+        _generateLocalizationTemplates = _options.GenerateLocalizationTemplates ?? RuntimeAutoGenerateTemplates();
+        PluginsDirectory   = ResolvePluginsDirectory(_options.PluginsDirectory);
 
-        Directory.CreateDirectory(_options.PluginsDirectory);
+        Directory.CreateDirectory(PluginsDirectory);
 
         if (_options.WatchForChanges)
             StartWatcher();
@@ -83,9 +95,9 @@ public sealed class PluginManager : IAsyncDisposable
     public Task<List<string>> DiscoverAsync()
     {
         var paths = new List<string>();
-        if (!Directory.Exists(_options.PluginsDirectory)) return Task.FromResult(paths);
+        if (!Directory.Exists(PluginsDirectory)) return Task.FromResult(paths);
 
-        foreach (var dir in Directory.GetDirectories(_options.PluginsDirectory, "*.Plugin"))
+        foreach (var dir in Directory.GetDirectories(PluginsDirectory, "*.Plugin"))
         {
             var name = Path.GetFileName(dir);
             var dll  = Path.Combine(dir, $"{name}.dll");
@@ -149,11 +161,17 @@ public sealed class PluginManager : IAsyncDisposable
     /// </summary>
     /// <param name="plugin">The already-started plugin instance to register.</param>
     /// <param name="context">The <see cref="PluginContext"/> the plugin was started with.</param>
+    /// <remarks>Works in single-file apps, where assemblies have no file location.</remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The plugin ID is not a valid file-name segment, or <see cref="PluginManifest.MinFrameworkVersion"/> is
+    /// invalid or newer than the running framework.
+    /// </exception>
     public async Task RegisterInProcessPluginAsync(IPlugin plugin, PluginContext context)
     {
         ArgumentNullException.ThrowIfNull(plugin);
         ArgumentNullException.ThrowIfNull(context);
         var manifest = plugin.Manifest;
+        ValidateManifest(manifest);
 
         var previousFlow = MarkFlow(await AcquireLifecycleAsync().ConfigureAwait(false));
         try
@@ -164,18 +182,24 @@ public sealed class PluginManager : IAsyncDisposable
                 return;
             }
 
-            // In-process plugins don't have their own AssemblyLoadContext — use a no-op sentinel.
-            var noOpLoadCtx = new PluginLoadContext(typeof(PluginManager).Assembly.Location);
+            // In-process plugins don't have their own AssemblyLoadContext — use an empty sentinel. It needs no
+            // assembly path, so this works in single-file apps where Assembly.Location is empty.
+            var noOpLoadCtx = PluginLoadContext.CreateInProcess(manifest.Id);
+            var assembly = plugin.GetType().Assembly;
+            var location = assembly.Location;
 
             _plugins[manifest.Id] = new LoadedPlugin
             {
                 Instance      = plugin,
                 Manifest      = manifest,
-                AssemblyPath  = typeof(PluginManager).Assembly.Location,
+                AssemblyPath  = string.IsNullOrEmpty(location)
+                    ? Path.Combine(AppContext.BaseDirectory, $"{assembly.GetName().Name}.dll")
+                    : location,
                 LoadContext   = noOpLoadCtx,
                 WeakReference = new WeakReference(noOpLoadCtx),
                 Context       = context,
-                State         = PluginState.Started
+                State         = PluginState.Started,
+                IsInProcess   = true
             };
         }
         finally { ExitLifecycle(previousFlow); }
@@ -291,6 +315,7 @@ public sealed class PluginManager : IAsyncDisposable
             plugin = (IPlugin)Activator.CreateInstance(pluginType)!;
             var manifest = plugin.Manifest;
             pluginId = manifest.Id;
+            ValidateManifest(manifest);
 
             // Reject before anything is started: the running instance stays untouched.
             if (_plugins.TryGetValue(manifest.Id, out var existing))
@@ -304,8 +329,8 @@ public sealed class PluginManager : IAsyncDisposable
             await plugin.OnConfigureAsync(ctx).ConfigureAwait(false);
             await ctx.Configuration.GenerateAllDefaultsAsync().ConfigureAwait(false);
             await ctx.Configuration.LoadAllAsync().ConfigureAwait(false);
-            await ctx.Localization.GenerateAllTemplatesAsync(_supportedCultures).ConfigureAwait(false);
-            await ctx.Localization.LoadAllAsync(_supportedCultures).ConfigureAwait(false);
+            await LibraryManager.LoadLocalizationAsync(ctx.Localization, _supportedCultures, _generateLocalizationTemplates)
+                .ConfigureAwait(false);
 
             await plugin.OnInitializeAsync(ctx).ConfigureAwait(false);
             startEntered = true;
@@ -522,7 +547,7 @@ public sealed class PluginManager : IAsyncDisposable
 
     private void StartWatcher()
     {
-        _watcher = new FileSystemWatcher(_options.PluginsDirectory, "*.dll")
+        _watcher = new FileSystemWatcher(PluginsDirectory, "*.dll")
         {
             NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.FileName,
             IncludeSubdirectories = true,
@@ -565,7 +590,7 @@ public sealed class PluginManager : IAsyncDisposable
 
         var fullPath = Path.GetFullPath(filePath);
         var plugin = _plugins.Values.FirstOrDefault(p =>
-            PathComparison.Comparer.Equals(Path.GetFullPath(p.AssemblyPath), fullPath));
+            !p.IsInProcess && PathComparison.Comparer.Equals(Path.GetFullPath(p.AssemblyPath), fullPath));
         if (plugin == null) return;
 
         Console.WriteLine($"  ~ Hot-reload: {Path.GetFileName(filePath)}");
@@ -604,9 +629,68 @@ public sealed class PluginManager : IAsyncDisposable
             DataDirectory         = dataDir,
             Logger                = logger,
             Configuration         = new ConfigurationManager(pluginDir),
-            Localization          = new LocalizationManager(locDir, _defaultCulture),
+            Localization          = new LocalizationManager(locDir, _defaultCulture)
+            {
+                Reloaded = () => _eventBus.Publish(new LocalizationReloadedEvent(pluginId))
+            },
             Events                = _eventBus
         };
+    }
+
+    /// <summary>
+    /// Resolves <see cref="PluginOptions.PluginsDirectory"/> to an absolute path. See <see cref="PluginsDirectory"/>.
+    /// </summary>
+    internal static string ResolvePluginsDirectory(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured)
+            || string.Equals(configured, PluginOptions.DefaultPluginsDirectory, StringComparison.Ordinal))
+        {
+            if (TryGetRuntimeOptions() is { } runtime)
+                return Path.GetFullPath(runtime.GetPluginsPath());
+            configured = PluginOptions.DefaultPluginsDirectory;
+        }
+        return Path.GetFullPath(configured, AppContext.BaseDirectory);
+    }
+
+    private static CodeLogicOptions? TryGetRuntimeOptions()
+    {
+        if (!global::CodeLogic.CodeLogic.IsInitialized) return null;
+        try { return global::CodeLogic.CodeLogic.GetOptions(); }
+        catch (InvalidOperationException) { return null; } // reset in between
+    }
+
+    private static bool RuntimeAutoGenerateTemplates()
+    {
+        if (!global::CodeLogic.CodeLogic.IsInitialized) return true;
+        try { return global::CodeLogic.CodeLogic.GetConfiguration().Localization.AutoGenerateTemplates; }
+        catch (InvalidOperationException) { return true; }
+    }
+
+    /// <summary>
+    /// The plugin ID names its log file, so it must be a single file-name segment; and a set
+    /// <see cref="PluginManifest.MinFrameworkVersion"/> must be a semantic version no newer than the running
+    /// framework (pre-release builds of a version count as that version).
+    /// </summary>
+    internal static void ValidateManifest(PluginManifest manifest)
+    {
+        if (!PathSegment.IsValid(manifest.Id))
+            throw new InvalidOperationException(
+                $"Plugin '{manifest.Name}' has an invalid ID '{manifest.Id}': it must not be empty or contain path " +
+                "separators, '..', control characters, ':', '*', '?', '\"', '<', '>' or '|', or start or end with " +
+                "whitespace or end with '.'.");
+
+        if (string.IsNullOrWhiteSpace(manifest.MinFrameworkVersion)) return;
+        if (!SemanticVersion.TryParse(manifest.MinFrameworkVersion, out var required))
+            throw new InvalidOperationException(
+                $"Plugin '{manifest.Id}' declares an invalid MinFrameworkVersion '{manifest.MinFrameworkVersion}' " +
+                "(expected a semantic version such as 5.0.0).");
+
+        if (!SemanticVersion.TryParse(CodeLogicEnvironment.FrameworkVersion, out var running))
+            return; // a local build without a semantic version: nothing to compare against
+        if (new SemanticVersion(running!.Major, running.Minor, running.Patch) < required)
+            throw new InvalidOperationException(
+                $"Plugin '{manifest.Id}' requires CodeLogic {manifest.MinFrameworkVersion} or later, " +
+                $"but {CodeLogicEnvironment.FrameworkVersion} is running.");
     }
 
     private static Type? FindPluginType(Assembly assembly) =>
