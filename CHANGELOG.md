@@ -201,6 +201,13 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   informational: the framework does not enforce or read them.
 - The web demo's event endpoints accept local requests only, limit input and never log caller text at
   Error; its public `/health` returns status levels only (details are local-only).
+- All guides were checked against the 5.x source. Examples now use exhaustive `switch` on results,
+  errors and `FrameworkEvent`, and the guides no longer describe APIs that don't exist (for example
+  `IEventSubscription` members, localization `SetCultureAsync`, made-up `HealthReport` members).
+  `[ConfigSection]` is documented correctly: it does not set the config file name.
+- The demos show 5.x idioms: the console demo subscribes to `FrameworkEvent` and handles a
+  `Result<int>` with an exhaustive `switch`, and the web demo maps a `Result<T>` and the `Error` kind
+  to HTTP status codes (`GET /plugins/{id}`).
 
 ### Performance
 

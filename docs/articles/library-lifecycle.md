@@ -17,7 +17,7 @@ Every CodeLogic library and plugin implements the same 4-phase lifecycle. The fr
 
 ## Phase 1 — Configure
 
-`OnConfigureAsync` is called for all libraries before any config file is loaded. Its only job is to register which config and localization models the library needs.
+`OnConfigureAsync` is called for each library, in dependency order, before that library's config files are loaded. Its only job is to register which config and localization models the library needs.
 
 ```csharp
 public Task OnConfigureAsync(LibraryContext context)
@@ -33,7 +33,7 @@ public Task OnConfigureAsync(LibraryContext context)
 }
 ```
 
-**Critical rule:** Do NOT read config values in this phase. Config files are generated/loaded *after* all `OnConfigureAsync` calls complete.
+**Critical rule:** Do NOT read config values in this phase. The library's config files are generated and loaded *after* `OnConfigureAsync` returns.
 
 ---
 
@@ -49,18 +49,14 @@ private DbConnection _db = null!;
 public async Task OnInitializeAsync(LibraryContext context)
 {
     _logger = context.Logger;
+    // Already validated on load (DataAnnotations and Validate())
     _config = context.Configuration.Get<MyConfig>();
-
-    // Validate config
-    var validation = _config.Validate();
-    if (!validation.IsValid)
-        throw new InvalidOperationException($"Config invalid: {string.Join(", ", validation.Errors)}");
 
     // Open connection
     _db = new DbConnection(_config.ConnectionString);
     await _db.OpenAsync();
 
-    _logger.LogInformation("Initialized with connection pool size {Size}", _config.PoolSize);
+    _logger.Info($"Initialized with connection pool size {_config.PoolSize}");
 }
 ```
 
@@ -77,7 +73,7 @@ private Task _backgroundTask = Task.CompletedTask;
 public Task OnStartAsync(LibraryContext context)
 {
     _backgroundTask = RunBackgroundAsync(_cts.Token);
-    context.Logger.LogInformation("Library started");
+    context.Logger.Info("Library started");
     return Task.CompletedTask;
 }
 
@@ -104,7 +100,8 @@ public async Task OnStopAsync()
     _cts.Cancel();
 
     // Wait for it to finish
-    await _backgroundTask.ConfigureAwait(false);
+    try { await _backgroundTask.ConfigureAwait(false); }
+    catch (OperationCanceledException) { }
 
     // Close database connection
     await _db.CloseAsync();
@@ -128,7 +125,7 @@ The same `LibraryContext` instance is passed to all four phases. Store it in a f
 public sealed class LibraryContext
 {
     public string LibraryId          { get; }
-    public string LibraryDirectory   { get; }   // {FrameworkRoot}/Libraries/{Id}/
+    public string LibraryDirectory   { get; }   // {FrameworkRoot}/Libraries/CL.{Name}/
     public string ConfigDirectory    { get; }
     public string LocalizationDirectory { get; }
     public string LogsDirectory      { get; }
@@ -150,13 +147,13 @@ The manifest describes the library's identity and requirements:
 ```csharp
 public LibraryManifest Manifest => new()
 {
-    Id          = "MyApp.Database",          // determines directory name
+    Id          = "CL.Database",             // determines directory name
     Name        = "Database Library",        // shown in console output
     Version     = "1.0.0",
     Description = "Manages database access",
     Author      = "Zyntal.com",
     Dependencies = [
-        new LibraryDependency("MyApp.Config", "1.0.0")
+        LibraryDependency.Required("CL.Config", "1.0.0")
     ],
     Tags = ["database", "infrastructure"]
 };
@@ -164,7 +161,11 @@ public LibraryManifest Manifest => new()
 
 ### Dependency Resolution
 
-Dependencies are resolved by ID and minimum version. The framework initializes libraries in dependency order — if library B depends on library A, A's `OnInitializeAsync` and `OnStartAsync` will complete before B's.
+Dependencies are resolved by ID and minimum version (from the manifest and any `[LibraryDependency]` attributes). The framework runs every phase in dependency order: if library B depends on library A, A's `OnConfigureAsync`, `OnInitializeAsync` and `OnStartAsync` complete before B's.
+
+### Failures
+
+An exception in Configure, Initialize or Start marks the library `Failed`, publishes `LibraryFailedEvent` and aborts the boot. Load a non-critical library with `new LibraryLoadOptions { OptionalAtBoot = true }` to log the failure and boot without it. Exceptions in `OnStopAsync` are logged; the other libraries still stop.
 
 ---
 
@@ -198,7 +199,7 @@ StopAsync() - reverse start order:
 
 ## IDisposable
 
-`ILibrary` extends `IDisposable`. The framework calls `Dispose()` after `OnStopAsync`. Use it for any final synchronous cleanup:
+`ILibrary` extends `IDisposable`, but the framework does not call `Dispose()`: `OnStopAsync` is the shutdown hook. Make `Dispose` safe to call more than once, for code that owns the instance directly (tests, for example):
 
 ```csharp
 public void Dispose()

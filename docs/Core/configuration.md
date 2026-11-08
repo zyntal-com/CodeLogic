@@ -36,7 +36,7 @@ public class DatabaseConfig : ConfigModelBase
 
         // Custom validation
         if (ConnectionString.Contains(".."))
-            return ConfigValidationResult.Invalid(["Connection string must not contain '..'."]);
+            return ConfigValidationResult.Invalid("Connection string must not contain '..'.");
 
         return ConfigValidationResult.Valid();
     }
@@ -45,22 +45,23 @@ public class DatabaseConfig : ConfigModelBase
 
 ---
 
+## File names
+
+The name passed to `Register<T>()` decides the file name:
+
+| Registration | File name |
+|--------------|-----------|
+| `Register<T>()` | `config.json` |
+| `Register<T>("db")` | `config.db.json` |
+
 ## ConfigSectionAttribute
 
-Controls the file name for a config model:
+`[ConfigSection]` adds a description and a schema version to the section. Admin UIs read them from `GetSchema`. It does **not** change the file name; pass the name to `Register<T>(name)` for that.
 
 ```csharp
-[ConfigSection("database")]
+[ConfigSection("database", Description = "Database connection", Version = 2)]
 public class DatabaseConfig : ConfigModelBase { ... }
 ```
-
-File naming rules:
-
-| Attribute | File name |
-|-----------|-----------|
-| No attribute | `config.json` |
-| `[ConfigSection("database")]` | `config.database.json` |
-| `Register<T>("db")` (subConfigName param) | `config.db.json` |
 
 ---
 
@@ -73,13 +74,24 @@ public interface IConfigurationManager
 {
     void Register<T>(string? subConfigName = null) where T : ConfigModelBase, new();
     T Get<T>() where T : ConfigModelBase, new();
-    Task GenerateDefaultAsync<T>() where T : ConfigModelBase, new();
-    Task LoadAsync<T>() where T : ConfigModelBase, new();
+    Task GenerateDefaultAsync<T>(bool force = false) where T : ConfigModelBase, new();
+    Task LoadAsync<T>(bool generateIfMissing = true) where T : ConfigModelBase, new();
     Task SaveAsync<T>(T config) where T : ConfigModelBase, new();
-    Task GenerateAllDefaultsAsync();
-    Task LoadAllAsync();
+    Task GenerateAllDefaultsAsync(bool force = false);
+    Task LoadAllAsync(bool generateIfMissing = true);
+    Task ValidateAllAsync(bool allowMissingFiles = false);
     Task ReloadAsync<T>() where T : ConfigModelBase, new();
     Task ReloadAllAsync();
+    IReadOnlyList<string> GetRegisteredFilePaths();
+
+    // Discovery, schema and generic save (admin UIs)
+    IReadOnlyList<ConfigSectionInfo> GetSections();
+    ConfigSchema GetSchema(string sectionName, bool includeSecrets = false);
+    Task<ConfigValidationResult> UpdateSectionAsync(string sectionName, string json,
+        string? changedBy = null, CancellationToken ct = default);
+    Task ResetSectionAsync(string sectionName, string? changedBy = null, CancellationToken ct = default);
+
+    event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
 }
 ```
 
@@ -89,13 +101,17 @@ public interface IConfigurationManager
 |--------|-------------|
 | `Register<T>()` | Registers a config type. Call in `OnConfigureAsync`. |
 | `Get<T>()` | Returns the loaded instance. Throws if not loaded. |
-| `GenerateDefaultAsync<T>()` | Writes `config.json` with defaults if the file doesn't exist. |
-| `LoadAsync<T>()` | Loads from disk, generates defaults if missing, validates. |
+| `GenerateDefaultAsync<T>(force)` | Writes the section's file with defaults if it doesn't exist. `force: true` overwrites it. |
+| `LoadAsync<T>(generateIfMissing)` | Loads from disk, generates defaults if missing (by default), validates. |
 | `SaveAsync<T>(config)` | Validates then writes to disk. Throws if validation fails. |
-| `GenerateAllDefaultsAsync()` | Generates defaults for all registered types that don't have files. |
-| `LoadAllAsync()` | Loads all registered configs. Called automatically by the framework. |
+| `GenerateAllDefaultsAsync(force)` | Generates defaults for all registered types that don't have files. |
+| `LoadAllAsync(generateIfMissing)` | Loads all registered configs. Called automatically by the framework. |
+| `ValidateAllAsync(allowMissingFiles)` | Validates the registered files on disk without loading them. |
 | `ReloadAsync<T>()` | Reloads a specific config from disk and updates the in-memory instance. |
 | `ReloadAllAsync()` | Reloads all registered configs from disk. |
+| `GetRegisteredFilePaths()` | Returns the paths of all registered config files. |
+| `GetSections()` / `GetSchema()` | List sections and describe their fields, for admin UIs. |
+| `UpdateSectionAsync()` / `ResetSectionAsync()` | Update a section from JSON, or reset it to defaults. |
 
 ---
 
@@ -284,7 +300,7 @@ public Task OnConfigureAsync(LibraryContext context)
 ### Using ConfigSection attribute
 
 ```csharp
-[ConfigSection("smtp")]
+[ConfigSection("smtp", Description = "Outgoing mail server")]
 public class SmtpConfig : ConfigModelBase
 {
     [Required]
@@ -297,21 +313,25 @@ public class SmtpConfig : ConfigModelBase
 }
 ```
 
-With `[ConfigSection("smtp")]`, you register without a subname and get the same file:
+The attribute only describes the section. The file name still comes from `Register`:
 
 ```csharp
-context.Configuration.Register<SmtpConfig>(); // → config.smtp.json
+context.Configuration.Register<SmtpConfig>("smtp"); // → config.smtp.json
 ```
 
 ### Manual generate-only (CI pattern)
 
 ```csharp
-// Generate configs and exit without starting
+// Generate configs, then return from StartAsync without starting anything
 var result = await CodeLogic.InitializeAsync(o =>
 {
     o.GenerateConfigs = true;
     o.ExitAfterGenerate = true;
 });
+if (result.ShouldExit) return;
+
+await CodeLogic.ConfigureAsync();   // writes missing config files
+await CodeLogic.StartAsync();       // returns right away
 ```
 
-Or use the CLI: `myapp --generate-configs`
+Or use the CLI: `myapp --generate-configs --exit-after-generate`

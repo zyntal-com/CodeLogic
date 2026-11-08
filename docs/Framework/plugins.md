@@ -129,12 +129,16 @@ public sealed class PluginManager : IAsyncDisposable
     event Action<string>? OnPluginUnloaded;
     event Action<string, Exception>? OnPluginError;
 
+    // Resolved plugins directory (absolute)
+    string PluginsDirectory { get; }
+
     // Discovery
     Task<List<string>> DiscoverAsync();
 
     // Load
     Task LoadPluginAsync(string pluginPath);
     Task LoadAllAsync();
+    Task RegisterInProcessPluginAsync(IPlugin plugin, PluginContext context);
 
     // Unload
     Task UnloadPluginAsync(string pluginId);
@@ -161,7 +165,7 @@ var pluginManager = new PluginManager(
     options:           new PluginOptions(),   // {FrameworkRoot}/Plugins
     loggingOptions:    CodeLogic.GetConfiguration().Logging.ToLoggingOptions(CodeLogic.GetOptions().GetFrameworkPath()),
     defaultCulture:    "en-US",
-    supportedCultures: new[] { "en-US", "da-DK" }
+    supportedCultures: ["en-US", "da-DK"]
 );
 
 // Register with the runtime for health checks and shutdown
@@ -386,12 +390,11 @@ public class MyApp : IApplication
         // await _plugins.LoadPluginAsync(pluginPath);
     }
 
-    public async Task OnStopAsync()
+    public Task OnStopAsync()
     {
-        // Runtime will call UnloadAllAsync via SetPluginManager —
-        // but you can also call it explicitly:
-        if (_plugins != null)
-            await _plugins.DisposeAsync();
+        // Nothing to do: after SetPluginManager the runtime owns the manager.
+        // StopAsync unloads the plugins right after this method returns.
+        return Task.CompletedTask;
     }
 }
 ```

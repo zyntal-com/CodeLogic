@@ -37,10 +37,12 @@ public interface IEventBus
 
 ### Method reference
 
+Handlers are matched by the static type `T` of the published event, not by base types. The one exception is `FrameworkEvent`: a subscriber to it receives every framework event (see below).
+
 | Method | Description |
 |--------|-------------|
 | `Publish<T>` | Publishes synchronously. Sync handlers run immediately on the calling thread. Async handlers are fire-and-forget (not awaited). |
-| `PublishAsync<T>` | Publishes and awaits all handlers (sync and async). |
+| `PublishAsync<T>` | Publishes and awaits all handlers (sync and async), one after another. |
 | `Subscribe<T>` | Subscribes a sync handler. Returns a disposable subscription. |
 | `SubscribeAsync<T>` | Subscribes an async handler. Returns a disposable subscription. |
 
@@ -89,60 +91,81 @@ Convention for where events are defined:
 
 ## Framework Events Reference
 
-All 11 built-in framework events:
+There are 13 framework events. All derive from `FrameworkEvent`, a C# 15 `closed record`:
+
+```csharp
+public closed record FrameworkEvent : IEvent;
+```
+
+### Subscribing to all framework events
+
+Subscribe to `FrameworkEvent` to get every framework event in one handler. Because the hierarchy is closed, a `switch` over it can list the cases you care about:
+
+```csharp
+context.Events.Subscribe<FrameworkEvent>(e => context.Logger.Info(e switch
+{
+    LibraryStartedEvent s    => $"Library started: {s.LibraryName}",
+    LibraryFailedEvent f     => $"Library failed: {f.LibraryName}: {f.Error.Message}",
+    ConfigChangedEvent c     => $"Config changed: {c.ComponentId}/{c.SectionName} ({c.Kind})",
+    ShutdownRequestedEvent r => $"Shutting down: {r.Reason}",
+    _                        => e.ToString(),
+}));
+```
+
+Subscribers to a specific type (for example `LibraryStartedEvent`) still receive only that type. Application and library events implement `IEvent` directly and never reach a `FrameworkEvent` subscriber.
 
 ### Lifecycle Events
 
 ```csharp
 // Published when a library completes OnStartAsync successfully
-record LibraryStartedEvent(string LibraryId, string LibraryName) : IEvent;
+record LibraryStartedEvent(string LibraryId, string LibraryName) : FrameworkEvent;
 
 // Published when a library completes OnStopAsync
-record LibraryStoppedEvent(string LibraryId, string LibraryName) : IEvent;
+record LibraryStoppedEvent(string LibraryId, string LibraryName) : FrameworkEvent;
 
 // Published when a library throws during any lifecycle phase
-record LibraryFailedEvent(string LibraryId, string LibraryName, Exception Error) : IEvent;
+record LibraryFailedEvent(string LibraryId, string LibraryName, Exception Error) : FrameworkEvent;
 
 // Published when a plugin is successfully loaded
-record PluginLoadedEvent(string PluginId, string PluginName) : IEvent;
+record PluginLoadedEvent(string PluginId, string PluginName) : FrameworkEvent;
 
 // Published when a plugin is unloaded
-record PluginUnloadedEvent(string PluginId, string PluginName) : IEvent;
+record PluginUnloadedEvent(string PluginId, string PluginName) : FrameworkEvent;
 
 // Published when a plugin throws during load or unload
-record PluginFailedEvent(string PluginId, string PluginName, Exception Error) : IEvent;
+record PluginFailedEvent(string PluginId, string PluginName, Exception Error) : FrameworkEvent;
 ```
 
 ### Configuration / Localization Events
 
 ```csharp
 // Published after a specific config type is reloaded from disk
-record ConfigReloadedEvent(string ComponentId, Type ConfigType) : IEvent;
+record ConfigReloadedEvent(string ComponentId, Type ConfigType) : FrameworkEvent;
 
 // Published after any committed change (update, reload, reset) of a library config section
 record ConfigChangedEvent(string ComponentId, string SectionName, Type ConfigType,
-    ConfigChangeKind Kind, string? ChangedBy) : IEvent;
+    ConfigChangeKind Kind, string? ChangedBy) : FrameworkEvent;
 
 // Published when a valid, saved change could not be applied by the library.
 // The library reports Degraded health until a later change applies.
-record ConfigApplyFailedEvent(string ComponentId, string SectionName, Exception Error) : IEvent;
+record ConfigApplyFailedEvent(string ComponentId, string SectionName, Exception Error) : FrameworkEvent;
 
 // Published after all localizations are reloaded from disk
-record LocalizationReloadedEvent(string ComponentId) : IEvent;
+record LocalizationReloadedEvent(string ComponentId) : FrameworkEvent;
 ```
 
 ### Health Events
 
 ```csharp
 // Published after a scheduled health check round completes
-record HealthCheckCompletedEvent(string ComponentId, bool IsHealthy, string Message) : IEvent;
+record HealthCheckCompletedEvent(string ComponentId, bool IsHealthy, string Message) : FrameworkEvent;
 ```
 
 ### Shutdown Events
 
 ```csharp
 // Published when the framework begins shutting down (CTRL+C, ProcessExit, or StopAsync)
-record ShutdownRequestedEvent(string Reason) : IEvent;
+record ShutdownRequestedEvent(string Reason) : FrameworkEvent;
 ```
 
 ### Bridge Event
@@ -153,7 +176,7 @@ record ComponentAlertEvent(
     string ComponentId,
     string AlertType,
     string Message,
-    object? Payload = null) : IEvent;
+    object? Payload = null) : FrameworkEvent;
 ```
 
 ---
@@ -261,7 +284,9 @@ public class MyLibrary : ILibrary
 ## Thread Safety
 
 - `Publish` calls sync handlers on the calling thread — be aware of threading context.
-- `PublishAsync` awaits all handlers; exceptions from handlers propagate to the caller.
+- `PublishAsync` awaits each handler in turn.
+- A handler that throws never breaks the publisher or the other handlers. The exception is written to stderr and publishing continues.
+- `Publish` takes no lock and allocates nothing. It sees the subscribers that existed when it started.
 - `Subscribe` and `SubscribeAsync` are thread-safe — you can subscribe from any thread.
 - `Dispose` on a subscription is thread-safe.
 - Do not modify shared state from async event handlers without proper synchronization.

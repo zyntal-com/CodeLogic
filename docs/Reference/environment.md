@@ -9,12 +9,13 @@
 ```csharp
 public static class CodeLogicEnvironment
 {
-    static string MachineName  { get; }   // Environment.MachineName
-    static string AppRootPath  { get; }   // AppContext.BaseDirectory
-    static string AppVersion   { get; internal set; }  // set during InitializeAsync
-    static bool    IsDebugging     { get; }   // Debugger.IsAttached
-    static string? EnvironmentName { get; }   // CODELOGIC_ / DOTNET_ / ASPNETCORE_ENVIRONMENT
-    static bool    IsDevelopment   { get; }   // EnvironmentName == "Development"
+    public static string  MachineName      { get; }                 // Environment.MachineName
+    public static string  AppRootPath      { get; }                 // AppContext.BaseDirectory
+    public static string  AppVersion       { get; internal set; }   // set during InitializeAsync
+    public static string  FrameworkVersion { get; }                 // CodeLogic assembly version, e.g. "5.0.42-preview"
+    public static bool    IsDebugging      { get; }                 // Debugger.IsAttached
+    public static string? EnvironmentName  { get; }                 // CODELOGIC_ / DOTNET_ / ASPNETCORE_ENVIRONMENT
+    public static bool    IsDevelopment    { get; }                 // EnvironmentName == "Development"
 }
 ```
 
@@ -58,9 +59,20 @@ CodeLogicEnvironment.AppVersion  // "1.2.3"
 - `HealthReport.AppVersion`
 - The `--version` CLI output
 
+### FrameworkVersion
+
+The version of the CodeLogic assembly, from its informational version without the `+commit` build
+metadata (for example `5.0.42` or `5.0.42-preview`). It appears in `--version` and `--info` output and is
+the default of `framework.version` in `CodeLogic.json`.
+
+```csharp
+string framework = CodeLogicEnvironment.FrameworkVersion;  // "5.0.42-preview"
+```
+
 ### IsDebugging
 
-`true` when a debugger is currently attached to the process:
+`true` when a debugger is currently attached to the process. It is informational only and does not
+select the config file:
 
 ```csharp
 if (CodeLogicEnvironment.IsDebugging)
@@ -136,6 +148,7 @@ if (CodeLogicEnvironment.IsDevelopment)
 app.MapGet("/version", () => new
 {
     version = CodeLogicEnvironment.AppVersion,
+    framework = CodeLogicEnvironment.FrameworkVersion,
     machine = CodeLogicEnvironment.MachineName,
     isDevelopment = CodeLogicEnvironment.IsDevelopment
 });

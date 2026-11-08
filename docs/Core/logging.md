@@ -18,11 +18,20 @@ public interface ILogger
     void Error(string message, Exception? exception = null);
     void Critical(string message, Exception? exception = null);
 
-    // Convenience format overloads
-    void Debug(string message, params object?[] args);
-    void Info(string message, params object?[] args);
-    void Warning(string message, params object?[] args);
-    void Error(string message, params object?[] args);
+    // Level check (default: true)
+    bool IsEnabled(LogLevel level);
+
+    // Interpolated-string overloads: holes are skipped when the level is disabled
+    void Trace(ref LogTraceInterpolatedStringHandler message);
+    void Debug(ref LogDebugInterpolatedStringHandler message);
+    void Info(ref LogInfoInterpolatedStringHandler message);
+    void Warning(ref LogWarningInterpolatedStringHandler message);
+
+    // Format overloads (string.Format)
+    void Debug(string message, params ReadOnlySpan<object?> args);
+    void Info(string message, params ReadOnlySpan<object?> args);
+    void Warning(string message, params ReadOnlySpan<object?> args);
+    void Error(string message, params ReadOnlySpan<object?> args);
 }
 ```
 
@@ -32,8 +41,8 @@ public interface ILogger
 public Task OnInitializeAsync(LibraryContext context)
 {
     context.Logger.Info("Library initializing");
-    context.Logger.Debug("Connection string: {0}", config.ConnectionString);
-    context.Logger.Warning("Retry limit reached after {0} attempts", retries);
+    context.Logger.Debug($"Pool size: {config.MaxConnections}");
+    context.Logger.Warning($"Retry limit reached after {retries} attempts");
 
     try { Connect(); }
     catch (Exception ex)
@@ -46,9 +55,9 @@ public Task OnInitializeAsync(LibraryContext context)
 }
 ```
 
-The format overloads use `string.Format` internally — use `{0}`, `{1}`, etc.
+Prefer interpolated strings. The format overloads (`"… {0} …", arg`) use `string.Format` and are there for message templates kept elsewhere.
 
-### Cost of a log call (5.0)
+### Cost of a log call
 
 Disabled levels are close to free, so leave Debug and Trace calls in hot code:
 
@@ -67,8 +76,9 @@ if (logger.IsEnabled(LogLevel.Debug))
     logger.Debug(DescribeQueryPlan(query));
 ```
 
-Custom `ILogger` implementations get `IsEnabled` (returning `true`) and the new overloads as default
-interface members, so they keep compiling; override `IsEnabled` to get the savings.
+Custom `ILogger` implementations get `IsEnabled` (returning `true`) and the interpolated and format
+overloads as default interface members. Implement the six basic methods, and override `IsEnabled` to get
+the savings.
 
 ### Background writing and flushing
 
@@ -212,7 +222,7 @@ var options = new LoggingOptions
 A no-op logger that discards all messages. Use for testing or when logging is optional:
 
 ```csharp
-public class NullLogger : ILogger
+public sealed class NullLogger : ILogger
 {
     public static readonly NullLogger Instance = new();
     // All methods are empty — no-op
@@ -238,7 +248,7 @@ The framework selects `CodeLogic.Development.json` (when the file exists) when:
 - it is `null` (the default) and the environment is `Development`: the first set variable of
   `CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` and `ASPNETCORE_ENVIRONMENT` is `Development`.
 
-An attached debugger or a `DEBUG` build no longer selects it, so attaching a debugger to a production
+An attached debugger or a `DEBUG` build does not select it, so attaching a debugger to a production
 process never changes its configuration. Set `DOTNET_ENVIRONMENT=Development` in your launch profile
 (ASP.NET Core templates already set `ASPNETCORE_ENVIRONMENT`) or set `UseDevelopmentConfig = true`.
 

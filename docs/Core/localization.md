@@ -73,9 +73,9 @@ public interface ILocalizationManager
     void Register<T>() where T : LocalizationModelBase, new();
     T Get<T>(string? culture = null) where T : LocalizationModelBase, new();
     Task GenerateTemplatesAsync<T>(IReadOnlyList<string> cultures) where T : LocalizationModelBase, new();
-    Task LoadAsync<T>(IReadOnlyList<string> cultures) where T : LocalizationModelBase, new();
+    Task LoadAsync<T>(IReadOnlyList<string> cultures, bool generateIfMissing = true) where T : LocalizationModelBase, new();
     Task GenerateAllTemplatesAsync(IReadOnlyList<string> cultures);
-    Task LoadAllAsync(IReadOnlyList<string> cultures);
+    Task LoadAllAsync(IReadOnlyList<string> cultures, bool generateIfMissing = true);
     Task ReloadAllAsync(IReadOnlyList<string> cultures);
     IReadOnlyList<string> GetLoadedCultures<T>() where T : LocalizationModelBase, new();
 }
@@ -88,9 +88,9 @@ public interface ILocalizationManager
 | `Register<T>()` | Registers a localization model type. Call in `OnConfigureAsync`. |
 | `Get<T>(culture)` | Returns the instance for the given culture. Falls back to default culture if not available. |
 | `GenerateTemplatesAsync<T>(cultures)` | Generates template JSON files for each culture if they don't exist. |
-| `LoadAsync<T>(cultures)` | Loads localization files for each culture. Non-default cultures merge with the default. |
+| `LoadAsync<T>(cultures, generateIfMissing)` | Loads localization files for each culture. Non-default cultures merge with the default. Missing files are generated unless `generateIfMissing` is false. |
 | `GenerateAllTemplatesAsync(cultures)` | Generates templates for all registered types and all cultures. |
-| `LoadAllAsync(cultures)` | Loads all registered types for all cultures. Called automatically by the framework. |
+| `LoadAllAsync(cultures, generateIfMissing)` | Loads all registered types for all cultures. Called automatically by the framework. |
 | `ReloadAllAsync(cultures)` | Reloads all localizations from disk into a new snapshot. `Get<T>` keeps returning the previous translations until every file has loaded, and still does if the reload throws. |
 | `GetLoadedCultures<T>()` | Returns the list of cultures that have been successfully loaded for a type. |
 

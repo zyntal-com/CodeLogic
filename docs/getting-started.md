@@ -167,10 +167,11 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 ```csharp
 using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Application;
+using CodeLogic.Framework.Libraries;
 
 public class MyApp : IApplication
 {
-    public ApplicationManifest Manifest => new()
+    public ApplicationManifest Manifest { get; } = new()
     {
         Id = "myapp",
         Name = "My Application",
@@ -211,7 +212,7 @@ using CodeLogic.Framework.Libraries;
 
 public class MyLibrary : ILibrary
 {
-    public LibraryManifest Manifest => new()
+    public LibraryManifest Manifest { get; } = new()
     {
         Id = "CL.MyLibrary",
         Name = "My Library",

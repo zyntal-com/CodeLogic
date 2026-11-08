@@ -27,14 +27,15 @@ public interface IApplication
 The application lifecycle interleaves with the library lifecycle:
 
 ```
-InitializeAsync()        ← framework init, config loaded
+InitializeAsync()        ← framework init, CodeLogic.json loaded
 
 ConfigureAsync()
   ├── App.OnConfigureAsync()      ← register app config/localization
-  └── (config files generated and loaded)
+  ├── (app config files generated and loaded)
+  └── Library1.OnConfigureAsync() ← libraries configure (dependency order),
+                                    each followed by loading its config files
 
 StartAsync()
-  ├── Library1.OnConfigureAsync() ← libraries configure
   ├── Library1.OnInitializeAsync()
   ├── Library1.OnStartAsync()     ← libraries fully running
   ├── App.OnInitializeAsync()     ← app starts AFTER all libraries
@@ -42,8 +43,8 @@ StartAsync()
 
 StopAsync()
   ├── App.OnStopAsync()           ← app stops FIRST
-  ├── Library1.OnStopAsync()      ← then libraries (reverse order)
-  └── (done)
+  ├── PluginManager.UnloadAllAsync() ← if one is registered
+  └── Library1.OnStopAsync()      ← then libraries (reverse order)
 ```
 
 `StopAsync` runs once per start: a second call (for example the process-exit handler after you called
@@ -76,7 +77,7 @@ Provided to the application during all lifecycle phases:
 public sealed class ApplicationContext
 {
     string ApplicationId          { get; }  // from Manifest.Id
-    string ApplicationDirectory   { get; }  // {FrameworkRoot}/Application/
+    string ApplicationDirectory   { get; }  // {FrameworkRoot}/Application/, or CodeLogicOptions.ApplicationRootPath
     string ConfigDirectory        { get; }  // same as ApplicationDirectory
     string LocalizationDirectory  { get; }  // {ApplicationDirectory}/localization/
     string LogsDirectory          { get; }  // {ApplicationDirectory}/logs/
@@ -106,7 +107,7 @@ Override it to add meaningful checks:
 public async Task<HealthStatus> HealthCheckAsync()
 {
     // Check that a required library service is responsive
-    var data = Libraries.Get<DataLibrary>();
+    var data = Libraries.Get<DataLibrary>();   // your own library type
     if (data == null)
         return HealthStatus.Unhealthy("Data library not available");
 
@@ -130,6 +131,7 @@ public async Task<HealthStatus> HealthCheckAsync()
 using CodeLogic.Framework.Application;
 using CodeLogic.Framework.Libraries;
 using CodeLogic.Core.Configuration;
+using CodeLogic.Core.Events;
 using CodeLogic.Core.Localization;
 using System.ComponentModel.DataAnnotations;
 
@@ -212,13 +214,10 @@ public class HomePointApp : IApplication
     }
 
     // Health check
-    public async Task<HealthStatus> HealthCheckAsync()
-    {
-        if (_server == null || !_server.IsRunning)
-            return HealthStatus.Unhealthy("API server is not running");
-
-        return HealthStatus.Healthy($"Running on port {_config.ApiPort}");
-    }
+    public Task<HealthStatus> HealthCheckAsync() =>
+        Task.FromResult(_server is { IsRunning: true }
+            ? HealthStatus.Healthy($"Running on port {_config.ApiPort}")
+            : HealthStatus.Unhealthy("API server is not running"));
 
     private void OnComponentAlert(ComponentAlertEvent e)
     {
@@ -251,6 +250,7 @@ if (result.RunHealthCheck)
 {
     var report = await CodeLogic.GetHealthAsync();
     Console.WriteLine(report.ToConsoleString());
+    await CodeLogic.StopAsync();
     return;
 }
 

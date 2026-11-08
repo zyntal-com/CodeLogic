@@ -1,6 +1,6 @@
 # CLI Arguments
 
-CodeLogic parses command-line arguments during `InitializeAsync()`. CLI flags override programmatic options.
+CodeLogic parses command-line arguments during `InitializeAsync()`. CLI flags override programmatic options. Other `--name value` arguments are [startup parameters](#startup-parameters).
 
 ---
 
@@ -129,16 +129,55 @@ If `--generate-configs-force` is combined with `--dry-run`, existing config file
 
 ---
 
+## `--exit-after-generate`
+
+Stops after config generation. `ConfigureAsync()` generates the files as usual, then `StartAsync()` prints
+`Config files generated. Edit them and restart.` and returns without starting libraries or the application.
+
+```text
+$ myapp --generate-configs --exit-after-generate
+Config files generated. Edit them and restart.
+```
+
+It only applies while config generation is on (`CodeLogicOptions.GenerateConfigs`, `true` by default).
+`InitializationResult.ShouldExit` stays `false`: the host still calls `ConfigureAsync()` and `StartAsync()`.
+
+---
+
+## Startup Parameters
+
+Any other `--name value` or `--name=value` argument is an application startup parameter. Read it with
+`CodeLogic.GetStartupParameter<T>` or `CodeLogic.GetRequiredStartupParameter<T>` after `InitializeAsync()`:
+
+```csharp
+var host = CodeLogic.GetStartupParameter("mysql-host", "localhost");
+var port = CodeLogic.GetStartupParameter("mysql-port", 3306);
+var key  = CodeLogic.GetRequiredStartupParameter<string>("api-key");   // throws when missing
+```
+
+- A command-line value wins over the environment variable. The variable name is the parameter name
+  upper-cased, with every character that is not a letter or digit replaced by `_` (`mysql-host` →
+  `MYSQL_HOST`).
+- Names are case-insensitive. When a parameter is repeated, the last value wins.
+- A flag without a value (`--verbose`) reads as `"true"`.
+- Supported types: `string`, `bool`, enums (case-insensitive), `Guid`, `TimeSpan`, and the numeric types,
+  parsed with the invariant culture. A value that does not convert throws `InvalidOperationException`
+  (without the value, which may be a secret).
+- `version`, `info`, `health`, `dry-run`, `generate-configs` and `generate-configs-force` are reserved
+  and never returned as parameters.
+
+---
+
 ## `InitializationResult`
 
 ```csharp
 public sealed class InitializationResult
 {
-    bool Success { get; init; }
-    bool IsFirstRun { get; init; }
-    bool ShouldExit { get; init; }
-    string Message { get; init; }
-    bool RunHealthCheck { get; init; }
+    public bool Success { get; init; }
+    public bool IsFirstRun { get; init; }
+    public bool ShouldExit { get; init; }
+    public string Message { get; init; }
+    public bool RunHealthCheck { get; init; }
 }
 ```
 
