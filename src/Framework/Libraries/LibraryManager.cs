@@ -401,6 +401,49 @@ public sealed class LibraryManager : IDisposable
         finally { _lock.Release(); }
     }
 
+    /// <summary>
+    /// Disposes every library instance, in reverse dependency order, once each: <see cref="IAsyncDisposable.DisposeAsync"/>
+    /// when the library implements it, otherwise <see cref="IDisposable.Dispose"/>. The runtime calls it after
+    /// <see cref="StopAllAsync"/> (from <c>StopAsync</c> and <c>ResetAsync</c>), so a library releases its resources even if
+    /// its <c>OnStopAsync</c> failed or it never started. Errors are reported and do not stop the other libraries.
+    /// </summary>
+    public async Task DisposeLibrariesAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            foreach (var loaded in DisposalOrder())
+            {
+                if (loaded.IsDisposed) continue;
+                loaded.IsDisposed = true;
+                try
+                {
+                    if (loaded.Instance is IAsyncDisposable asyncDisposable) await asyncDisposable.DisposeAsync();
+                    else loaded.Instance.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    ReportDisposeError(loaded, ex);
+                }
+            }
+        }
+        finally { _lock.Release(); }
+    }
+
+    // Reverse dependency order; reverse load order when the graph cannot be sorted (a dependency cycle).
+    private List<LoadedLibrary> DisposalOrder()
+    {
+        try { return GetOrderedLibraries(reverse: true); }
+        catch (InvalidOperationException) { return [.. Enumerable.Reverse(_libraries)]; }
+    }
+
+    private static void ReportDisposeError(LoadedLibrary loaded, Exception ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"  ✗ Error disposing {loaded.Manifest.Name}: {ex.Message}");
+        Console.ResetColor();
+    }
+
     // ── Health checks ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -468,7 +511,7 @@ public sealed class LibraryManager : IDisposable
     /// </summary>
     public IEnumerable<LoadedLibrary> GetLoadedLibraries() => Array.AsReadOnly(_libraries);
 
-    // ── Config discovery (3.4.1+) ────────────────────────────────────────────
+    // ── Config discovery ───────────────────────────────────────────────────
 
     /// <summary>
     /// Enumerate every registered configuration section across every loaded
@@ -606,7 +649,7 @@ public sealed class LibraryManager : IDisposable
         }
     }
 
-    // ── Config hot reload (4.9.0+) ───────────────────────────────────────────
+    // ── Config hot reload ──────────────────────────────────────────────────
 
     /// <summary>
     /// Starts watching <c>Libraries/*/config*.json</c> when <see cref="EnableConfigHotReload"/> is true.
@@ -746,7 +789,7 @@ public sealed class LibraryManager : IDisposable
     private LibraryContext CreateContext(string libraryId)
     {
         var root    = Path.Combine(FrameworkRootPath, "Libraries");
-        var libDir  = Path.Combine(root, NormalizeId(libraryId));
+        var libDir  = AdoptDirectory(root, NormalizeId(libraryId));
         var logsDir = Path.Combine(libDir, "logs");
         var dataDir = Path.Combine(libDir, "data");
         var locDir  = Path.Combine(libDir, "localization");
@@ -990,6 +1033,35 @@ public sealed class LibraryManager : IDisposable
             throw new InvalidOperationException("Dependency validation failed:\n  " + string.Join("\n  ", errors));
     }
 
+    /// <summary>
+    /// The library's directory under <paramref name="root"/>. When it does not exist but one directory differs from it only
+    /// in letter case (a library that changed the casing of its ID, on a case-sensitive file system), that directory is
+    /// renamed to the new name so the library keeps its config, data and logs. If the rename fails, the old directory is used.
+    /// </summary>
+    internal static string AdoptDirectory(string root, string name)
+    {
+        var path = Path.Combine(root, name);
+        if (Directory.Exists(path) || !Directory.Exists(root)) return path;
+
+        string[] candidates;
+        try
+        {
+            candidates = [.. Directory.EnumerateDirectories(root)
+                .Where(d => string.Equals(Path.GetFileName(d), name, StringComparison.OrdinalIgnoreCase))];
+        }
+        catch (IOException) { return path; }
+        catch (UnauthorizedAccessException) { return path; }
+        if (candidates.Length != 1) return path;   // none, or ambiguous: start a new directory
+
+        try
+        {
+            Directory.Move(candidates[0], path);
+            return path;
+        }
+        catch (IOException) { return candidates[0]; }
+        catch (UnauthorizedAccessException) { return candidates[0]; }
+    }
+
     private static string NormalizeId(string id) =>
         id.StartsWith("CL.", StringComparison.OrdinalIgnoreCase) ? $"CL.{id[3..]}" : $"CL.{id}";
 
@@ -1106,9 +1178,25 @@ public sealed class LibraryManager : IDisposable
         return null;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Stops watching config files and disposes the library instances that <see cref="DisposeLibrariesAsync"/> has not
+    /// disposed yet (synchronously, in reverse dependency order).
+    /// </summary>
     public void Dispose()
     {
+        _lock.Wait();
+        try
+        {
+            foreach (var loaded in DisposalOrder())
+            {
+                if (loaded.IsDisposed) continue;
+                loaded.IsDisposed = true;
+                try { loaded.Instance.Dispose(); }
+                catch (Exception ex) { ReportDisposeError(loaded, ex); }
+            }
+        }
+        finally { _lock.Release(); }
+
         AppDomain.CurrentDomain.AssemblyResolve -= OnAssemblyResolve;
         _configWatcher?.Dispose();
         _configWatcher = null;

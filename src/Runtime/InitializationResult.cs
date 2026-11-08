@@ -21,8 +21,8 @@ public sealed class InitializationResult
 
     /// <summary>
     /// True when the process should exit without continuing startup.
-    /// Set by <c>--version</c>, <c>--info</c>, <c>--generate-configs</c> with <c>ExitAfterGenerate=true</c>,
-    /// and initialization failures.
+    /// Set by <c>--version</c>, <c>--info</c> and initialization failures. (<c>--exit-after-generate</c>
+    /// does not set it: <c>StartAsync</c> returns early instead.)
     /// </summary>
     public bool ShouldExit { get; init; }
 

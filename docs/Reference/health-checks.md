@@ -11,12 +11,14 @@ Every component returns `HealthStatus` from `HealthCheckAsync()`:
 ```csharp
 public sealed class HealthStatus
 {
-    HealthStatusLevel Status { get; init; }
-    string Message { get; init; }
-    Dictionary<string, object>? Data { get; init; }
-    DateTime CheckedAt { get; init; }
+    public HealthStatusLevel Status { get; init; }          // Healthy, Degraded, Unhealthy
+    public string Message { get; init; }
+    public Dictionary<string, object>? Data { get; init; }
+    public DateTime CheckedAt { get; init; }                // UTC
 
-    bool IsHealthy => Status == HealthStatusLevel.Healthy;
+    public bool IsHealthy   => Status == HealthStatusLevel.Healthy;
+    public bool IsDegraded  => Status == HealthStatusLevel.Degraded;
+    public bool IsUnhealthy => Status == HealthStatusLevel.Unhealthy;
 }
 ```
 
@@ -36,30 +38,34 @@ HealthStatus.FromException(ex)
 ```csharp
 public sealed class HealthReport
 {
-    bool IsHealthy { get; init; }
-    DateTime CheckedAt { get; init; }
-    string MachineName { get; init; }
-    string AppVersion { get; init; }
+    public bool IsHealthy { get; init; }
+    public DateTime CheckedAt { get; init; }   // UTC
+    public string MachineName { get; init; }
+    public string AppVersion { get; init; }
 
-    Dictionary<string, HealthStatus> Libraries { get; init; }
-    Dictionary<string, HealthStatus> Plugins { get; init; }
-    HealthStatus? Application { get; init; }
+    public Dictionary<string, HealthStatus> Libraries { get; init; }   // started libraries, by ID
+    public Dictionary<string, HealthStatus> Plugins { get; init; }     // started plugins, by ID
+    public HealthStatus? Application { get; init; }
+
+    public string ToJson();                      // full details
+    public string ToJson(bool includeDetails);   // false: status levels only
+    public string ToConsoleString();
 }
 ```
 
-`IsHealthy` is only `true` when every reported component is healthy.
+`IsHealthy` is only `true` when every reported component is healthy. A `Degraded` component makes it `false`.
 
 ---
 
 ## Scheduled Checks
 
-When `healthChecks.enabled = true`, `CodeLogicRuntime` starts a timer during `StartAsync()` after libraries, plugins, and the application are running.
+When `healthChecks.enabled = true`, `CodeLogicRuntime` starts a timer at the end of `StartAsync()`, once libraries and the application are running. The first round runs one interval later.
 
 Each scheduled round:
 
 - calls `CodeLogic.GetHealthAsync()`
-- publishes one aggregate `HealthCheckCompletedEvent` for the runtime
-- publishes one `HealthCheckCompletedEvent` per library, plugin, and application component
+- publishes one aggregate `HealthCheckCompletedEvent` with `ComponentId = "runtime"`
+- publishes one `HealthCheckCompletedEvent` per library, plugin, and application component (the application uses its manifest ID)
 
 Configuration:
 
@@ -138,7 +144,7 @@ public async Task<HealthStatus> HealthCheckAsync()
 }
 ```
 
-Application example:
+Application example. `IApplication.HealthCheckAsync()` has a default that reports `Healthy`; override it when the application has something to check:
 
 ```csharp
 public async Task<HealthStatus> HealthCheckAsync()
@@ -157,9 +163,9 @@ public async Task<HealthStatus> HealthCheckAsync()
 ```csharp
 var report = await CodeLogic.GetHealthAsync();
 
-var libraryHealth = await CodeLogic.GetLibraryManager()?.GetHealthAsync()
-    ?? new Dictionary<string, HealthStatus>();
+Dictionary<string, HealthStatus> libraryHealth =
+    CodeLogic.GetLibraryManager() is { } libraries ? await libraries.GetHealthAsync() : [];
 
-var pluginHealth = await CodeLogic.GetPluginManager()?.GetHealthAsync()
-    ?? new Dictionary<string, HealthStatus>();
+Dictionary<string, HealthStatus> pluginHealth =
+    CodeLogic.GetPluginManager() is { } plugins ? await plugins.GetHealthAsync() : [];
 ```

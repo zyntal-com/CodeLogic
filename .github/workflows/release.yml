@@ -106,7 +106,7 @@ jobs:
           # nuget.org strips it from the package version, so it is provenance only —
           # it survives in the assembly InformationalVersion. Nothing is written back
           # to the repo; the version is composed at pack time via -p:Version.
-          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
+          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "5.0"
           $sha = '${{ github.sha }}'.Substring(0,7)
           if ('${{ github.ref_name }}'.StartsWith('prerelease/')) {
             $version = "$rootVer.${{ github.run_number }}-preview+$sha"

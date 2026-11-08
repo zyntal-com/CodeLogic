@@ -272,7 +272,7 @@ public sealed class ConfigurationManager : IConfigurationManager
     public IReadOnlyList<string> GetRegisteredFilePaths() =>
         _registered.Keys.Select(GetFilePath).ToList();
 
-    // ─── 3.3.0 additions ──────────────────────────────────────────────────────
+    // ─── Discovery, schema and generic save ────────────────────────────────
 
     /// <inheritdoc />
     public IReadOnlyList<ConfigSectionInfo> GetSections()

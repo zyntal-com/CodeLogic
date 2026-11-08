@@ -12,6 +12,9 @@ namespace CodeLogic.Framework.Libraries;
 ///   <item><description><see cref="OnStartAsync"/> — Start background tasks, open connections.</description></item>
 ///   <item><description><see cref="OnStopAsync"/> — Gracefully stop and release resources.</description></item>
 /// </list>
+/// After stopping, the framework disposes every library once, in reverse dependency order
+/// (<see cref="IAsyncDisposable.DisposeAsync"/> when implemented, otherwise <see cref="IDisposable.Dispose"/>),
+/// including libraries that failed or never started.
 /// </para>
 /// </summary>
 public interface ILibrary : IDisposable

@@ -19,7 +19,7 @@ The `Validate()` method runs DataAnnotations validation automatically. Override 
 
 ```csharp
 using System.ComponentModel.DataAnnotations;
-using CodeLogic.Core;
+using CodeLogic.Core.Configuration;
 
 public class DatabaseConfig : ConfigModelBase
 {
@@ -39,7 +39,7 @@ public class DatabaseConfig : ConfigModelBase
 
         // custom rules
         if (ConnectionString.Contains(".."))
-            return ConfigValidationResult.Invalid(["Path traversal not allowed in connection string"]);
+            return ConfigValidationResult.Invalid("Path traversal not allowed in connection string");
 
         return ConfigValidationResult.Valid();
     }
@@ -48,22 +48,19 @@ public class DatabaseConfig : ConfigModelBase
 
 ---
 
-## ConfigSectionAttribute
+## File names
 
-Controls the file name suffix for a config model:
+The name passed to `Register<T>()` sets the file name suffix:
 
-```csharp
-[ConfigSection("database")]
-public class DatabaseConfig : ConfigModelBase { ... }
-```
-
-| Library ID | Attribute value | File name |
-|------------|-----------------|-----------|
-| `MyApp.Database` | `[ConfigSection("database")]` | `config.database.json` |
-| `MyApp.Database` | `[ConfigSection("advanced")]` | `config.advanced.json` |
-| `MyApp.Database` | *(none)* | `config.json` |
+| Registration | File name |
+|--------------|-----------|
+| `Register<DatabaseConfig>()` | `config.json` |
+| `Register<DatabaseConfig>("database")` | `config.database.json` |
+| `Register<AdvancedConfig>("advanced")` | `config.advanced.json` |
 
 Files are placed in the library's `ConfigDirectory` (`{FrameworkRoot}/Libraries/{LibraryId}/`).
+
+`[ConfigSection("database", Description = "...")]` only adds a description and schema version for admin UIs. It does not change the file name.
 
 ---
 
@@ -74,8 +71,8 @@ Register models in `OnConfigureAsync`:
 ```csharp
 public Task OnConfigureAsync(LibraryContext context)
 {
-    context.Configuration.Register<DatabaseConfig>();
-    context.Configuration.Register<AdvancedConfig>();
+    context.Configuration.Register<DatabaseConfig>();             // config.json
+    context.Configuration.Register<AdvancedConfig>("advanced");   // config.advanced.json
     return Task.CompletedTask;
 }
 ```
@@ -89,33 +86,36 @@ Reading config in `OnConfigureAsync` will throw — files are generated/loaded a
 Read models in `OnInitializeAsync` or later:
 
 ```csharp
-public async Task OnInitializeAsync(LibraryContext context)
+public Task OnInitializeAsync(LibraryContext context)
 {
     var config = context.Configuration.Get<DatabaseConfig>();
-
-    var validation = config.Validate();
-    if (!validation.IsValid)
-        throw new InvalidOperationException(string.Join("; ", validation.Errors));
-
     // use config values
+    return Task.CompletedTask;
 }
 ```
+
+Configs are validated when they load, so a library never sees an invalid instance. An invalid file fails the library's Configure phase, which stops startup unless the library is optional.
 
 ---
 
 ## IConfigurationManager API
 
+The members you use most:
+
 ```csharp
 public interface IConfigurationManager
 {
-    void Register<T>() where T : ConfigModelBase, new();
-    T Get<T>() where T : ConfigModelBase;
+    void Register<T>(string? subConfigName = null) where T : ConfigModelBase, new();
+    T Get<T>() where T : ConfigModelBase, new();
+    Task SaveAsync<T>(T config) where T : ConfigModelBase, new();
     Task ReloadAsync<T>() where T : ConfigModelBase, new();
     Task ReloadAllAsync();
-    Task SaveAsync<T>(T model) where T : ConfigModelBase, new();
     event EventHandler<ConfigChangedEventArgs>? ConfigChanged;
+    // ... plus generate/load/validate and the admin-UI members (GetSections, GetSchema, UpdateSectionAsync, ResetSectionAsync)
 }
 ```
+
+See [Core › Configuration](https://github.com/zyntal-com/CodeLogic/blob/main/docs/Core/configuration.md#iconfigurationmanager) for the full interface.
 
 ---
 
@@ -126,7 +126,7 @@ The framework-level config file (`CodeLogic.json`) has a development variant: `C
 Use this for local log levels and developer settings that should not be committed to source control:
 
 ```json
-// Framework/CodeLogic.Development.json  ← add to .gitignore
+// CodeLogic/Framework/CodeLogic.Development.json  ← add to .gitignore
 {
   "logging": {
     "globalLevel": "Debug",
@@ -160,22 +160,15 @@ Set `DB_HOST=db.internal` in the environment, or pass `--db-host db.internal` (o
 
 ## First-Run Generation
 
-When a config file does not exist, CodeLogic:
+When a config file does not exist, CodeLogic writes it with the model's default values during `ConfigureAsync` and carries on starting. Set `CodeLogicOptions.GenerateConfigs = false` for strict mode: a missing file then fails the library's Configure phase.
 
-1. Creates the config file with default property values
-2. Exits with a message: `Config files generated. Please review and restart.`
-
-Use the `--generate-configs` flag to generate without starting:
+To generate the files and stop before anything starts:
 
 ```bash
-./MyApp --generate-configs
+./MyApp --generate-configs --exit-after-generate
 ```
 
-Use `--force` to regenerate even if files already exist:
-
-```bash
-./MyApp --generate-configs-force
-```
+`--generate-configs-force` overwrites existing files with defaults. It is destructive. Both flags accept library IDs to limit the scope (`--generate-configs CL.Mail CL.SQLite`).
 
 ---
 
@@ -197,7 +190,8 @@ Libraries can apply changes live, per instance, by implementing `IConfigReloadab
 The framework itself uses `CodeLogic.json` in the `FrameworkRootPath` directory. It controls:
 
 - Logging level and output mode
-- Library directories
-- Development mode detection
+- Localization cultures
+- Library discovery and config file watching
+- Scheduled health checks
 
-See [API Reference](../api/index.md) for the full `CodeLogic.json` property reference.
+See [CodeLogic.json reference](https://github.com/zyntal-com/CodeLogic/blob/main/docs/Reference/codelogic-json.md) for every property.

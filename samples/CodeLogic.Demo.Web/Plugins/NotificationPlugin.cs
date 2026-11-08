@@ -31,7 +31,7 @@ public class NotificationPlugin : IPlugin
 
     // Rolling log — thread-safe
     private readonly List<NotificationEntry> _log = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private int _errorCount;
 
     public async Task OnConfigureAsync(PluginContext context)
@@ -104,7 +104,7 @@ public class NotificationPlugin : IPlugin
     // ── Public access for the /plugins/notifications endpoint ─────────────────
     public IReadOnlyList<NotificationEntry> GetLog()
     {
-        lock (_lock) return _log.ToList();
+        lock (_lock) return [.. _log];
     }
 
     public void Dispose() => _notifySub?.Dispose();

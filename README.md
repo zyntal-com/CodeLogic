@@ -28,6 +28,8 @@ CodeLogic gives you a **structured lifecycle** out of the box:
 dotnet add package CodeLogic
 ```
 
+While 5.0 is in preview, add `--prerelease`. Without it you get the latest stable 4.9.x (.NET 10).
+
 ## What's new in 5.0
 
 - **.NET 11 and C# 15.** CodeLogic 5 targets `net11.0`; the 4.9.x line stays available for .NET 10.
@@ -62,6 +64,21 @@ var message = found switch
 User admin = (await users.FindAsync(adminId)).ValueOrThrow();
 (await users.DeleteAsync(oldId)).ThrowIfFailure();
 ```
+
+## Events
+
+Framework events derive from the closed record `FrameworkEvent`. Subscribe once to receive all of them:
+
+```csharp
+CodeLogic.GetEventBus().Subscribe<FrameworkEvent>(e => Console.WriteLine(e switch
+{
+    LibraryStartedEvent s => $"Started {s.LibraryName}",
+    LibraryFailedEvent f  => $"Failed {f.LibraryName}: {f.Error.Message}",
+    _                     => e.ToString(),
+}));
+```
+
+Your own events implement `IEvent`. See [Event Bus](docs/articles/event-bus.md).
 
 ## Quick Start
 
@@ -119,14 +136,18 @@ CodeLogic/
 │   │   ├── Logging/        # ILogger with scoped file-based output
 │   │   ├── Configuration/  # Auto-generated JSON config with validation
 │   │   ├── Localization/   # Culture-aware string management
+│   │   ├── Events/         # EventBus, IEvent, FrameworkEvent
+│   │   ├── Results/        # Result, Result<T>, Error
 │   │   └── Utilities/      # SemanticVersion, StartupValidator, FirstRunManager
 │   │
 │   ├── Framework/          # Lifecycle orchestration — uses Core
 │   │   ├── Libraries/      # ILibrary, LibraryContext, LibraryManager
-│   │   ├── Application/    # IApplication, ApplicationContext
-│   │   └── Plugins/        # IPlugin, PluginContext, PluginManager (hot-reload)
+│   │   └── Application/    # IApplication, ApplicationContext
+│   │       └── Plugins/    # IPlugin, PluginContext, PluginManager (hot-reload)
 │   │
-│   └── CodeLogic.cs        # Static facade + ICodeLogicRuntime (injectable)
+│   ├── Runtime/            # CodeLogicRuntime, ICodeLogicRuntime (injectable), options
+│   ├── CodeLogic.cs        # Static facade over the runtime
+│   └── Libraries.cs        # Static facade for loading and finding libraries
 │
 ├── docs/                   # Documentation (getting started, articles, API reference)
 └── samples/                # Example applications
@@ -247,6 +268,7 @@ The [CodeLogic.* library family](https://github.com/zyntal-com/CodeLogic.Libs) p
 | [CodeLogic.Data](https://www.nuget.org/packages/CodeLogic.Data) | Unified database framework: LINQ queries, repositories, joins, transactions, schema sync, migrations, backups |
 | CodeLogic.Data.MySql / .PostgreSql / .SqlServer / .Sqlite | The database providers for CodeLogic.Data |
 | [CodeLogic.Mail](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP/IMAP email with template engine |
+| [CodeLogic.Mqtt](https://www.nuget.org/packages/CodeLogic.Mqtt) | MQTT clients with automatic reconnect, plus an embedded broker |
 | [CodeLogic.Storage](https://www.nuget.org/packages/CodeLogic.Storage) | Provider-neutral mounted storage for local filesystems, S3/R2/MinIO, FTP/FTPS, SFTP, WebDAV, Azure Blob, Google Cloud Storage, and OpenStack Swift |
 | [CodeLogic.SocialConnect](https://www.nuget.org/packages/CodeLogic.SocialConnect) | Discord webhooks + Steam Web API |
 | [CodeLogic.NetUtils](https://www.nuget.org/packages/CodeLogic.NetUtils) | DNS, DNSBL, IP geolocation |

@@ -204,10 +204,10 @@ public enum LibraryState
 
 When `EnableDependencyResolution = true` (default), the `LibraryManager` performs a topological sort before starting libraries:
 
-1. Builds a dependency graph from `LibraryManifest.Dependencies`
+1. Builds a dependency graph from `LoadedLibrary.Dependencies` (manifest entries plus `[LibraryDependency]` attributes)
 2. Validates that all required dependencies are registered (throws if missing)
 3. Validates version constraints (throws if version is too old)
-4. Starts libraries in dependency order (dependencies first)
+4. Configures, initializes and starts libraries in dependency order (dependencies first)
 5. Stops libraries in reverse order (dependencies last)
 
 ```
@@ -348,7 +348,12 @@ public class DataLibrary : ILibrary
 ```csharp
 // In Program.cs, after InitializeAsync:
 await Libraries.LoadAsync<DataLibrary>();
+
+// A "nice to have" library: a failure is logged, the library is marked Failed and the boot continues.
+await Libraries.LoadAsync<MailLibrary>(new LibraryLoadOptions { OptionalAtBoot = true });
 ```
+
+Library assemblies placed at `{FrameworkRoot}/Libraries/CL.Name/CL.Name.dll` are discovered and loaded by `ConfigureAsync` without a `LoadAsync` call.
 
 ### Accessing the library from the application
 

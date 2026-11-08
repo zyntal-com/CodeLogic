@@ -28,9 +28,9 @@ public class RequestLoggerPlugin : IPlugin
     public PluginState State { get; private set; } = PluginState.Loaded;
 
     // Thread-safe stats
-    private readonly Dictionary<string, int> _byMethod = new();
-    private readonly Dictionary<string, int> _byPath   = new();
-    private readonly object _lock = new();
+    private readonly Dictionary<string, int> _byMethod = [];
+    private readonly Dictionary<string, int> _byPath   = [];
+    private readonly Lock _lock = new();
     private int _total;
 
     private RequestLoggerConfig _config = new();

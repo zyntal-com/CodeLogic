@@ -21,7 +21,7 @@ All three use the same four phases:
 | Configure | `OnConfigureAsync` | Register config and localization models |
 | Initialize | `OnInitializeAsync` | Read config and prepare services |
 | Start | `OnStartAsync` | Begin processing and background work |
-| Stop | `OnStopAsync` | Shut down cleanly |
+| Stop | `OnStopAsync` (plugins: `OnUnloadAsync`) | Shut down cleanly |
 
 ---
 
@@ -134,6 +134,8 @@ CodeLogic/
 ## Next Steps
 
 - [Getting Started](articles/getting-started.md)
+- [Migrating to 5.0](articles/migrating-to-5.md)
+- [Results and Errors](Core/results.md)
 - [Configuration](articles/configuration.md)
 - [Event Bus](articles/event-bus.md)
 - [Plugins](articles/plugins.md)

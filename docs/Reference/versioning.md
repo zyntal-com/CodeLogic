@@ -108,8 +108,12 @@ request with the full suite green.
    (`prerelease` or `release`). It merges the source into `<channel>/<major>.x`, reading the major
    from the source's `version.txt`, and refuses to merge across lines.
 3. The release workflow on that branch re-runs the full suite, packs, pre-flights every package and
-   publishes. In CodeLogic.Libs only libraries changed since that line's last release tag
-   (`libs-v<major.minor>-<run>`) are packed.
+   publishes.
+   - In CodeLogic it skips the release when nothing that ships (`src`, `build`, `version.txt`,
+     `global.json`, the root build files, `CHANGELOG.md`, the READMEs, the logo) changed since the
+     channel's last tag. Dispatch it with `force` to publish anyway.
+   - In CodeLogic.Libs only libraries changed since that line's last release tag
+     (`libs-v<major.minor>-<run>`) are packed.
 
 A fix that applies to both lines is made on one integration branch and cherry-picked in a second
 pull request into the other.

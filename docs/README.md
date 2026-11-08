@@ -9,6 +9,8 @@ CodeLogic is a modular .NET 11 framework for building structured, lifecycle-awar
 | Document | Description |
 |----------|-------------|
 | [Getting Started](getting-started.md) | Installation, the 5-step boot sequence, first run behavior, your first library and application, and a minimal working example. |
+| [Migrating to 5.0](articles/migrating-to-5.md) | Moving from CodeLogic 4.x (.NET 10) to 5.0 (.NET 11): result unions, the closed `Error` hierarchy, `FrameworkEvent`, and behavior changes. |
+| [Articles](articles/getting-started.md) | Task-focused guides: application and library lifecycle, configuration, localization, event bus, health checks, and plugins. |
 
 ---
 
@@ -21,8 +23,8 @@ The building blocks available to all components.
 | [Logging](Core/logging.md) | `ILogger`, `LogLevel`, `LoggingMode`, `LoggingOptions`, `NullLogger`, development vs production behavior, log file locations, and console output. |
 | [Configuration](Core/configuration.md) | `ConfigModelBase`, `ConfigSectionAttribute`, `IConfigurationManager`, file naming, the Register → Generate → Load → Save → Reload lifecycle, live per-instance reload for libraries (`IConfigReloadable`, `ConfigDiff`), config file watching, and DataAnnotations validation. |
 | [Localization](Core/localization.md) | `LocalizationModelBase`, `LocalizationSectionAttribute`, `LocalizedStringAttribute`, `ILocalizationManager`, culture fallback, file naming, reload support, and format strings. |
-| [Events](Core/events.md) | `IEventBus`, `IEvent`, `IEventSubscription`, framework events reference, the `ComponentAlertEvent` bridge pattern, thread safety, and code examples. |
-| [Results](Core/results.md) | `Result<T>`, `Result`, `Error`, `ErrorCode` — the framework's error handling pattern with factory methods, implicit conversions, and chaining. |
+| [Events](Core/events.md) | `IEventBus`, `IEvent`, `IEventSubscription`, the closed `FrameworkEvent` base and framework events reference, the `ComponentAlertEvent` bridge pattern, thread safety, and code examples. |
+| [Results](Core/results.md) | `Result<T>`, `Result`, `Error`, `ErrorCode` — the framework's error handling pattern: union results, the closed `Error` hierarchy, exhaustive `switch`, factory methods, and chaining. |
 
 ---
 

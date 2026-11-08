@@ -85,8 +85,15 @@ It is a full replacement file, not an overlay. Keep the full schema in that file
 ## Your First Library
 
 ```csharp
+using System.ComponentModel.DataAnnotations;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
+
+public class MyDbConfig : ConfigModelBase
+{
+    [Required]
+    public string ConnectionString { get; set; } = "Data Source=app.db";
+}
 
 public class MyDatabaseLibrary : ILibrary
 {
@@ -124,6 +131,7 @@ public class MyDatabaseLibrary : ILibrary
 ```csharp
 using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Application;
+using CodeLogic.Framework.Libraries;   // HealthStatus
 
 public class MyApp : IApplication
 {
@@ -165,6 +173,9 @@ public class MyApp : IApplication
 | `--generate-configs` | Generate missing config files before startup continues |
 | `--generate-configs-force` | Overwrite existing config files with defaults |
 | `--dry-run` | Run configure only, validate startup inputs, and do not write files |
+| `--exit-after-generate` | Stop after config generation instead of starting libraries and the application |
+
+See the [CLI reference](../Reference/cli-args.md) for details and application startup parameters.
 
 ---
 

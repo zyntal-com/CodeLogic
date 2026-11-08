@@ -6,7 +6,7 @@ namespace CodeLogic.Demo.Shared;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Demo library with several named instances in ONE config section — the same
-// shape as CL.MySQL2's "Databases". It implements IConfigReloadable so a change
+// shape as a multi-database config. It implements IConfigReloadable so a change
 // to one endpoint reconnects only that endpoint; the others stay connected.
 //
 // Try it:
@@ -47,7 +47,7 @@ public sealed class EndpointConfig
 
 public sealed class EndpointsLibrary : ILibrary, IConfigReloadable
 {
-    private readonly Dictionary<string, string> _connections = new();
+    private readonly Dictionary<string, string> _connections = [];
 
     public LibraryManifest Manifest { get; } = new()
     {
@@ -106,7 +106,7 @@ public sealed class EndpointsLibrary : ILibrary, IConfigReloadable
 
     public Task OnStopAsync()
     {
-        foreach (var id in _connections.Keys.ToList())
+        foreach (var id in _connections.Keys.ToArray())
             Disconnect(id);
         return Task.CompletedTask;
     }

@@ -9,9 +9,11 @@ The framework configuration file lives at `{FrameworkRoot}/Framework/CodeLogic.j
 | File | When loaded |
 |------|-------------|
 | `CodeLogic.json` | Normal production/default runtime config |
-| `CodeLogic.Development.json` | Loaded instead of `CodeLogic.json` when the environment is `Development` (`CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT`), or when `CodeLogicOptions.UseDevelopmentConfig = true`. An attached debugger alone does not switch files |
+| `CodeLogic.Development.json` | Loaded instead of `CodeLogic.json`, when it exists, if the environment is `Development` (`CODELOGIC_ENVIRONMENT`, `DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT`) or `CodeLogicOptions.UseDevelopmentConfig = true`. An attached debugger alone does not switch files |
 
-`CodeLogic.Development.json` is a full replacement file, not an overlay. It must contain every section you want the runtime to use.
+The first run generates both files. Property names are camelCase.
+
+`CodeLogic.Development.json` is a full replacement file, not an overlay. Anything it leaves out takes the built-in default from the tables below, not the value in `CodeLogic.json`. The generated file sets only a few `logging` values, so copy any other section you changed.
 
 Add `CodeLogic.Development.json` to `.gitignore`.
 
@@ -68,7 +70,7 @@ Add `CodeLogic.Development.json` to `.gitignore`.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `name` | string | `"CodeLogic"` | Informational display name |
-| `version` | string | `"5.0.0"` | Informational framework version |
+| `version` | string | `CodeLogicEnvironment.FrameworkVersion` | Informational framework version (for example `"5.0.0"`) |
 
 ### `logging`
 
