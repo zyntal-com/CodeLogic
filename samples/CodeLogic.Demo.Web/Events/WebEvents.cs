@@ -21,7 +21,7 @@ public record RequestReceivedEvent(
 
 /// <summary>
 /// Raised when something noteworthy happens in the application.
-/// Can be triggered externally via POST /events/trigger.
+/// Can be triggered externally via POST /events/notify.
 /// </summary>
 public record AppNotificationEvent(
     string Title,

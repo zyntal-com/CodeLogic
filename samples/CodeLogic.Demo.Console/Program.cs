@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using CodeLogic;
+using CodeLogic.Core.Events;
+using CodeLogic.Core.Results;
 using CodeLogic.Demo.Console.Application;
 using CodeLogic.Demo.Console.Config;
 using CodeLogic.Demo.Console.Events;
@@ -10,6 +13,26 @@ using CodeLogic.Framework.Application.Plugins;
 // ─────────────────────────────────────────────────────────────────────────────
 // Program.cs — Entry point. Boot sequence + main loop only.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Framework events ──────────────────────────────────────────────────────
+// The event bus exists before InitializeAsync. Every framework event derives from
+// the closed record FrameworkEvent, so one subscription sees all of them.
+using var frameworkSub = CodeLogic.CodeLogic.GetEventBus().Subscribe<FrameworkEvent>(e =>
+{
+    var line = e switch
+    {
+        LibraryStartedEvent s     => $"library started: {s.LibraryName}",
+        LibraryStoppedEvent s     => $"library stopped: {s.LibraryName}",
+        LibraryFailedEvent f      => $"library failed: {f.LibraryName}: {f.Error.Message}",
+        PluginLoadedEvent p       => $"plugin loaded: {p.PluginName}",
+        PluginUnloadedEvent p     => $"plugin unloaded: {p.PluginName}",
+        ShutdownRequestedEvent r  => $"shutting down: {r.Reason}",
+        ConfigChangedEvent c      => $"config {c.Kind}: {c.ComponentId}/{c.SectionName}",
+        HealthCheckCompletedEvent => null, // scheduled; too chatty for the console
+        _                         => e.GetType().Name,
+    };
+    if (line is not null) Console.WriteLine($"  [event] {line}");
+});
 
 // ── Step 1: Initialize ────────────────────────────────────────────────────
 var initResult = await CodeLogic.CodeLogic.InitializeAsync(opts =>
@@ -28,8 +51,8 @@ if (!initResult.Success || initResult.ShouldExit)
 
 // ── Step 2: Register libraries (BEFORE ConfigureAsync) ────────────────────
 // LibraryManager is ready after InitializeAsync. Register all libs here.
-// Example — uncomment when you have a CL.SQLite reference:
-//   await Libraries.LoadAsync<CL.SQLite.SQLiteLibrary>();
+// Example — uncomment when you reference the CodeLogic.Data / CodeLogic.Mail packages:
+//   await Libraries.LoadAsync<CL.Data.Hosting.DataLibrary>();
 //   await Libraries.LoadAsync<CL.Mail.MailLibrary>();
 //
 // In-process demo library showing live, per-instance config reload ([C] below).
@@ -43,13 +66,13 @@ CodeLogic.CodeLogic.RegisterApplication(new DemoApplication());
 await CodeLogic.CodeLogic.ConfigureAsync();
 
 // ── Step 5: Start ─────────────────────────────────────────────────────────
-// Runs Configure on the app and libraries, then Initialize/Start on libraries before the app.
+// Runs Initialize → Start on the libraries (in dependency order), then on the app.
 await CodeLogic.CodeLogic.StartAsync();
 
 // ── Step 6: Create PluginManager + load in-process plugins ────────────────
 // In a real app, plugins would be DLL files in a Plugins/ folder loaded
 // via pluginMgr.LoadAllAsync(). In this demo we load them directly as
-// in-process classes using LoadInProcessAsync() so the demo is self-contained.
+// in-process classes using LoadInProcessPluginAsync() so the demo is self-contained.
 //
 // The PluginManager is wired to the shared event bus so plugins can pub/sub
 // with the rest of the app. It is registered with the runtime for health
@@ -102,7 +125,7 @@ using var workSub = bus.Subscribe<WorkCompletedEvent>(e =>
 });
 
 Console.WriteLine("Commands:");
-Console.WriteLine("  [W] Simulate work   (triggers GreetingPlugin + StatsPlugin)");
+Console.WriteLine("  [W] Simulate work   (returns a Result; triggers GreetingPlugin + StatsPlugin)");
 Console.WriteLine("  [L] Log all levels  (shows what writes to disk vs filtered)");
 Console.WriteLine("  [H] Health report   (includes plugin health)");
 Console.WriteLine("  [P] Plugin status   (list loaded plugins)");
@@ -126,13 +149,20 @@ while (running)
             // Simulate work — publishes WorkCompletedEvent which DemoApplication
             // subscribes to and logs at Info level → writes to application.log
             bus.Publish(new UserActionEvent("do-work"));
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-
-            // Randomly succeed or fail to show both Info and Warning in logs
-            await Task.Delay(config.WorkIntervalMs);
+            var sw = Stopwatch.StartNew();
+            var batch = await RunBatchAsync(config.WorkIntervalMs, config.MaxItemsPerBatch);
             sw.Stop();
-            var success = Random.Shared.NextDouble() > 0.3; // 70% success rate
-            bus.Publish(new WorkCompletedEvent("SimulatedBatch", sw.Elapsed, success));
+
+            // Result<int> is a union of int | Error, and Error is a closed hierarchy:
+            // the compiler checks that this switch covers every case.
+            var (success, outcome) = batch switch
+            {
+                int items          => (true,  $"{items} items"),
+                TimeoutError error => (false, $"timed out ({error.Code})"),
+                Error error        => (false, error.Message),
+                null               => (false, "no result"),
+            };
+            bus.Publish(new WorkCompletedEvent($"SimulatedBatch: {outcome}", sw.Elapsed, success));
             break;
 
         case ConsoleKey.L:
@@ -143,7 +173,7 @@ while (running)
             DemoApplication.LogAllLevels(ctx, "Demo");
             Console.WriteLine($"  Done. Check: {logFile}");
             Console.WriteLine($"  (Current level filter: " +
-                $"{(CodeLogicEnvironment.IsDebugging ? "Trace+" : "Warning+")})\n");
+                $"{(CodeLogicEnvironment.IsDevelopment ? "Trace+" : "Warning+")})\n");
             break;
 
         case ConsoleKey.H:
@@ -188,6 +218,19 @@ while (running)
 // StopAsync() handles: app → plugins (via PluginManager) → libraries
 await CodeLogic.CodeLogic.StopAsync();
 
+
+// ── Helper: simulated batch job ───────────────────────────────────────────
+// Expected failures are returned as Error values, not thrown. Roughly 70% succeed.
+static async Task<Result<int>> RunBatchAsync(int delayMs, int maxItems)
+{
+    await Task.Delay(delayMs);
+    return Random.Shared.Next(10) switch
+    {
+        < 2 => Error.Timeout("demo.batch_timeout", "The batch took too long"),
+        < 3 => Error.Unavailable("demo.backend_unavailable", "The backend is unavailable"),
+        _   => Random.Shared.Next(1, maxItems + 1),
+    };
+}
 
 // ── Helper: load an in-process plugin through the full 4-phase lifecycle ──
 // Normally PluginManager loads plugins from separate DLL files.
