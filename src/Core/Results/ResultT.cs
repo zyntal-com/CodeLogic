@@ -20,7 +20,7 @@ namespace CodeLogic.Core.Results;
 /// };
 /// </code>
 /// <para>
-/// The <see cref="IsSuccess"/> / <see cref="Value"/> / <see cref="Error"/> members from 4.x remain available.
+/// The <see cref="IsSuccess"/> / <see cref="Value"/> / <see cref="Error"/> properties are there for code that prefers plain checks.
 /// A <c>default(Result&lt;T&gt;)</c> is neither a success nor carries an error; it matches the <c>null</c> pattern.
 /// A success whose value is <c>null</c> also matches the <c>null</c> pattern, but reports <see cref="IsSuccess"/> = true.
 /// </para>

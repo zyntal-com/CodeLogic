@@ -5,6 +5,22 @@ namespace CodeLogic.Tests;
 
 public sealed class StartupParameterStoreTests
 {
+    [Theory]
+    [InlineData("generate-configs")]
+    [InlineData("generate-configs-force")]
+    [InlineData("exit-after-generate")]
+    [InlineData("dry-run")]
+    [InlineData("version")]
+    [InlineData("info")]
+    [InlineData("health")]
+    public void Framework_flags_are_not_startup_parameters(string flag)
+    {
+        var store = StartupParameterStore.From(["--" + flag, "--app-mode", "x"], new Dictionary<string, string>());
+
+        Assert.Null(store.Get<string>(flag));
+        Assert.Equal("x", store.Get<string>("app-mode"));
+    }
+
     [Fact]
     public void Command_line_wins_and_final_occurrence_is_used()
     {

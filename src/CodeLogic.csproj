@@ -11,19 +11,19 @@
     <!--
       Version is COMPOSED at build time, never hardcoded here.
 
-        Major.Minor  ← repo-root version.txt (e.g. "4.8"), hand-controlled.
+        Major.Minor  ← repo-root version.txt (e.g. "5.0"), hand-controlled.
         Patch        ← the $(Patch) property. CI passes the GitHub run number
                        (-p:Patch=<run_number> or the whole -p:Version=...);
-                       a local/dev build leaves it 0, giving a stable "4.8.0".
+                       a local/dev build leaves it 0, giving a stable "5.0.0".
 
-      CI publishes 4.8.<run_number>+<short-sha> (release) or
-      4.8.<run_number>-preview+<short-sha> (prerelease). The run number is the
+      CI publishes 5.0.<run_number>+<short-sha> (release) or
+      5.0.<run_number>-preview+<short-sha> (prerelease). The run number is the
       monotonic, NuGet-orderable component (NuGet Patch is an Int32). The git
       sha is SemVer build-metadata: it is stripped by nuget.org and ignored for
       ordering, so it serves only as provenance — it survives in
       InformationalVersion.
 
-      To move the line to 4.9, edit version.txt. Nothing else bumps it.
+      To move the line to 5.1, edit version.txt. Nothing else bumps it.
 
       AssemblyVersion / FileVersion are Win32 UInt16-per-field and cannot carry a
       -prerelease or +metadata suffix, so they are pinned to Major.Minor.0.0.

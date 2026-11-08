@@ -4,9 +4,9 @@ CodeLogic provides `Result<T>` and `Result` as structured return types for opera
 
 ---
 
-## Pattern matching (5.0, C# 15)
+## Pattern matching
 
-Since 5.0, `Result<T>` is a C# 15 **union** of `T` and `Error`, `Result` is a union of `Ok` and `Error`, and `Error` is a **closed** record whose kinds are fixed subtypes. The compiler checks that a `switch` handles every case:
+`Result<T>` is a C# 15 **union** of `T` and `Error`, `Result` is a union of `Ok` and `Error`, and `Error` is a **closed** record whose kinds are fixed subtypes. The compiler checks that a `switch` handles every case:
 
 ```csharp
 IResult ToHttp(Result<User> result) => result switch
@@ -30,18 +30,20 @@ int StatusCode(Error error) => error switch   // no default arm needed
 };
 ```
 
-The `null` arm covers `default(Result<T>)` (never assigned) and a success whose value is `null`. `IsSuccess`, `Value`, `Error`, `Map`, `OnSuccess`, `ValueOrThrow` and the other 4.x members are unchanged, so existing code keeps compiling. New in 5.0: `Bind`, `Match`, `MapAsync`, `BindAsync`, value equality, and `Error.Empty`, which a `default` result reports from `Map`/`OnFailure`/`ToResult`.
+The `null` arm covers `default(Result<T>)` (never assigned) and a success whose value is `null`. A `default` result reports `Error.Empty` from `Map`, `Bind`, `Match`, `OnFailure` and `ToResult`.
 
-See [Migrating to 5.0](../articles/migrating-to-5.md) for the breaking changes.
+To check a single case, use a pattern: `if (result is Error e) return e;`.
+
+Coming from 4.x? See [Migrating to 5.0](../articles/migrating-to-5.md).
 
 ---
 
 ## Result\<T\>
 
-A discriminated union containing either a success value or an `Error`:
+A union of a success value and an `Error`:
 
 ```csharp
-public readonly struct Result<T>
+public readonly struct Result<T>   // union of T | Error
 {
     public bool IsSuccess { get; }
     public bool IsFailure => !IsSuccess;
@@ -57,6 +59,10 @@ public readonly struct Result<T>
 
     // Transformation
     public Result<TOut> Map<TOut>(Func<T, TOut> mapper);
+    public Task<Result<TOut>> MapAsync<TOut>(Func<T, Task<TOut>> mapper);
+    public Result<TOut> Bind<TOut>(Func<T, Result<TOut>> binder);
+    public Task<Result<TOut>> BindAsync<TOut>(Func<T, Task<Result<TOut>>> binder);
+    public TOut Match<TOut>(Func<T, TOut> onSuccess, Func<Error, TOut> onFailure);
     public Result ToResult();
 
     // Callbacks
@@ -82,17 +88,19 @@ public Result<User> FindUser(string id)
     return user; // implicit: Result<User>.Success(user)
 }
 
-// Check and handle
-var result = FindUser("user-123");
-
-if (result.IsFailure)
+// Handle every case
+switch (FindUser("user-123"))
 {
-    logger.Warning($"User lookup failed: {result.Error}");
-    return;
+    case User user:
+        logger.Info($"Found {user.Email}");
+        break;
+    case Error error:
+        logger.Warning($"User lookup failed: {error}");
+        break;
 }
-
-var user = result.Value!;
 ```
+
+A `switch` statement with an `Error` arm handles every failure. Add a `null` arm when the result might be `default`.
 
 ### Implicit conversions
 
@@ -115,6 +123,20 @@ Result<string> emailResult = FindUser("user-123")
 ```
 
 If the original result was a failure, `Map` propagates the failure without calling the mapper.
+
+### Bind and Match
+
+`Bind` chains an operation that returns its own result. `Match` reduces both cases to one value:
+
+```csharp
+Result<Order> order = FindUser("user-123").Bind(u => LoadLastOrder(u.Id));
+
+string label = order.Match(
+    onSuccess: o => $"Order {o.Id}",
+    onFailure: e => $"No order: {e.Message}");
+```
+
+`MapAsync` and `BindAsync` do the same with async delegates.
 
 ### Callbacks
 
@@ -148,7 +170,7 @@ catch (ResultFailedException ex) when (ex.Error is NotFoundError) { /* ... */ }
 For operations that succeed or fail without a return value:
 
 ```csharp
-public readonly struct Result
+public readonly struct Result   // union of Ok | Error
 {
     public bool IsSuccess { get; }
     public bool IsFailure => !IsSuccess;
@@ -158,7 +180,10 @@ public readonly struct Result
     public static Result Failure(Error error);
 
     public static implicit operator Result(Error error);
+    public static implicit operator Result(Ok ok);
 
+    public Result<TOut> Bind<TOut>(Func<Result<TOut>> binder);
+    public TOut Match<TOut>(Func<TOut> onSuccess, Func<Error, TOut> onFailure);
     public Result OnSuccess(Action action);
     public Result OnFailure(Action<Error> action);
     public void ThrowIfFailure();   // throws ResultFailedException on failure
@@ -175,9 +200,8 @@ public Result DeleteUser(string id)
     return Result.Success();
 }
 
-var result = DeleteUser("user-123");
-if (result.IsFailure)
-    return result.Error!;
+if (DeleteUser("user-123") is Error error)
+    return error;
 
 // Where a failure is a bug (tests, scripts, startup), throw instead:
 DeleteUser("user-123").ThrowIfFailure();
@@ -187,21 +211,30 @@ DeleteUser("user-123").ThrowIfFailure();
 
 ## Error
 
-Represents a structured, serializable error:
+A structured error. `Error` is a `closed record`; each kind is a sealed subtype:
 
 ```csharp
-public sealed class Error
-{
-    public string Code { get; }     // "category.specific_issue"
-    public string Message { get; }  // human-readable description
-    public string? Details { get; } // optional extra context
-    public Error? InnerError { get; } // error chaining
-}
+public closed record Error(
+    string Code,                // "category.specific_issue"
+    string Message,             // human-readable description
+    string? Details = null,     // optional extra context
+    Error? InnerError = null);  // error chaining
+
+public sealed record NotFoundError(...)     : Error(...);
+public sealed record ValidationError(...)   : Error(...);
+public sealed record InternalError(...)     : Error(...);
+public sealed record UnauthorizedError(...) : Error(...);
+public sealed record ConflictError(...)     : Error(...);
+public sealed record TimeoutError(...)      : Error(...);
+public sealed record UnavailableError(...)  : Error(...);
 ```
+
+Errors compare by value: same kind, code, message, details and inner error means equal. `Error.Empty` is what a `default` result reports.
 
 ### Factory methods
 
 ```csharp
+// Each factory returns the matching subtype
 Error.NotFound("user.not_found", "User not found", $"Id={id}")
 Error.Validation("email.invalid", "Email address is invalid", email)
 Error.Internal("db.query_failed", "Database query failed", innerError: dbError)
@@ -209,7 +242,7 @@ Error.Unauthorized("auth.token_expired", "Access token has expired")
 Error.Conflict("user.duplicate", "A user with this email already exists")
 Error.Timeout("api.timeout", "API call timed out after 30s")
 Error.Unavailable("db.unavailable", "Database is currently unavailable")
-Error.FromException(ex)  // wraps exception.Message as an internal error
+Error.FromException(ex)  // InternalError: message = ex.Message, details = exception type name
 ```
 
 ### Chaining
@@ -217,7 +250,7 @@ Error.FromException(ex)  // wraps exception.Message as an internal error
 ```csharp
 var dbError = Error.Internal("db.query_failed", "Query failed");
 var appError = Error.Internal("user.create_failed", "Could not create user")
-    .WithInner(dbError);
+    .WithInner(dbError);   // keeps the kind (InternalError)
 
 // ToString: [user.create_failed] Could not create user → [db.query_failed] Query failed
 ```
@@ -327,14 +360,12 @@ public class UserService
 }
 
 // Caller
-var result = userService.CreateUser("alice@example.com", "Alice");
-
-result
-    .OnSuccess(u => logger.Info($"Created user {u.Id}"))
-    .OnFailure(e => logger.Warning($"Create failed: {e}"));
-
-if (result.IsSuccess)
+var message = userService.CreateUser("alice@example.com", "Alice") switch
 {
-    var user = result.Value!;
-}
+    User u            => $"Created user {u.Id}",
+    ValidationError e => $"Invalid input: {e.Message}",
+    ConflictError     => "That email is already registered",
+    Error e           => $"Create failed: {e}",
+    null              => "Create failed: empty result",
+};
 ```

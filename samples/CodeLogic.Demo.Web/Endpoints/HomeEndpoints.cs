@@ -33,13 +33,14 @@ public static class HomeEndpoints
 
             return Results.Ok(new
             {
-                title       = config.SiteTitle,
-                welcome     = string.Format(strings.Welcome, config.SiteTitle),
-                language    = config.DefaultLanguage,
-                machine     = Env.MachineName,
-                appVersion  = Env.AppVersion,
-                isDebugging = Env.IsDebugging,
-                logFile     = "data/app/logs/application.log"
+                title         = config.SiteTitle,
+                welcome       = string.Format(strings.Welcome, config.SiteTitle),
+                language      = config.DefaultLanguage,
+                machine       = Env.MachineName,
+                appVersion    = Env.AppVersion,
+                isDevelopment = Env.IsDevelopment,
+                isDebugging   = Env.IsDebugging,
+                logFile       = "data/app/logs/application.log"
             });
         })
         .WithName("Home");
@@ -59,7 +60,7 @@ public static class HomeEndpoints
             ctx.Logger.Error(   "ERROR   — something failed, needs attention");
             ctx.Logger.Critical("CRITICAL — severe failure");
 
-            var activeConfig = Env.IsDebugging
+            var activeConfig = Env.IsDevelopment
                 ? "CodeLogic.Development.json (Debug+)"
                 : "CodeLogic.json (Warning+)";
 
@@ -68,7 +69,7 @@ public static class HomeEndpoints
                 message       = "Wrote 6 log entries to application.log",
                 activeConfig,
                 logFile       = "data/app/logs/application.log",
-                tip           = "Run with debugger attached to see all levels. Without debugger only Warning+ writes to disk."
+                tip           = "Set DOTNET_ENVIRONMENT=Development to see all levels. Otherwise only Warning+ writes to disk."
             });
         })
         .WithName("LogsDemo");

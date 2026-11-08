@@ -65,14 +65,9 @@ var builder = WebApplication.CreateBuilder(args);
 // This makes them testable and decoupled.
 builder.Services.AddSingleton<IEventBus>(CodeLogic.CodeLogic.GetEventBus());
 
-// Optionally expose the runtime itself for advanced scenarios
-builder.Services.AddSingleton<ICodeLogicRuntime>(provider =>
-    // The static CodeLogic facade wraps the singleton runtime — we
-    // can't easily extract it, so create a new one for DI use.
-    // For real apps, pass the runtime instance directly.
-    throw new InvalidOperationException(
-        "Use CodeLogic.GetApplicationContext() directly for now, " +
-        "or wire ICodeLogicRuntime from your own CodeLogicRuntime instance."));
+// The static CodeLogic facade wraps one runtime that it does not expose. To inject
+// ICodeLogicRuntime instead, create your own CodeLogicRuntime, boot that instance,
+// and register it here.
 
 // ── Step 5: Build the app ─────────────────────────────────────────────────
 var app = builder.Build();

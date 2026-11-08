@@ -6,10 +6,16 @@ This section contains the complete API reference for CodeLogic 5, generated from
 
 | Namespace | Description |
 |-----------|-------------|
-| `CodeLogic` | Entry point (`CodeLogic` static class), `Libraries`, `CodeLogicEnvironment` |
-| `CodeLogic.Core` | Core abstractions: `IEventBus`, `ILogger`, `IConfigurationManager`, `ILocalizationManager`, `Result<T>`, `Error` |
-| `CodeLogic.Framework` | Library, application, and plugin contracts: `ILibrary`, `IApplication`, `IPlugin`, manifests, contexts |
-| `CodeLogic.Runtime` | Internal runtime — boot sequence, `LibraryManager`, `PluginManager` |
+| `CodeLogic` | Entry point (`CodeLogic` static class), `Libraries`, `CodeLogicEnvironment`, `ICodeLogicRuntime`, `CodeLogicOptions`, `CodeLogicConfiguration`, `HealthReport` |
+| `CodeLogic.Core.Configuration` | `ConfigModelBase`, `IConfigurationManager`, schemas, `ConfigDiff` |
+| `CodeLogic.Core.Events` | `IEventBus`, `IEvent`, `FrameworkEvent` and the framework events |
+| `CodeLogic.Core.Localization` | `LocalizationModelBase`, `ILocalizationManager` |
+| `CodeLogic.Core.Logging` | `ILogger`, `Logger`, `LoggingOptions` |
+| `CodeLogic.Core.Results` | `Result<T>`, `Result`, `Ok`, `Error` and its subtypes, `ErrorCode` |
+| `CodeLogic.Core.Utilities` | `SemanticVersion`, `CliArgParser`, `StartupValidator`, `FirstRunManager` |
+| `CodeLogic.Framework.Libraries` | `ILibrary`, `LibraryContext`, `LibraryManifest`, `LibraryManager`, `HealthStatus` |
+| `CodeLogic.Framework.Application` | `IApplication`, `ApplicationContext`, `ApplicationManifest` |
+| `CodeLogic.Framework.Application.Plugins` | `IPlugin`, `PluginContext`, `PluginManifest`, `PluginManager` |
 
 ## Key Types
 
@@ -34,14 +40,15 @@ This section contains the complete API reference for CodeLogic 5, generated from
 ### Core Abstractions
 - `IEventBus` — publish/subscribe event bus
 - `IEvent` — marker interface for events
+- `FrameworkEvent` — closed base of every framework event
 - `ILogger` — structured logger
 - `ConfigModelBase` — base class for config models
 - `LocalizationModelBase` — base class for localization models
 
 ### Results
-- `Result<T>` — discriminated union for success/failure
-- `Result` — non-generic result
-- `Error` — structured error with `ErrorCode`
+- `Result<T>` — union of `T | Error`
+- `Result` — union of `Ok | Error`
+- `Error` — closed record with one subtype per kind (`NotFoundError`, `ValidationError`, ...)
 
 ### Health Checks
 - `HealthStatus` — Healthy / Degraded / Unhealthy with message and data

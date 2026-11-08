@@ -7,6 +7,7 @@ CodeLogic 5.0 targets **.NET 11 only** and builds on C# 15. The 4.x line (.NET 1
 - Target `net11.0` in every project that references CodeLogic or a `CodeLogic.*` / `CL.*` 5.0 package.
 - Use the .NET 11 SDK. A `global.json` with `"rollForward": "latestFeature"` is recommended.
 - Move all CodeLogic packages together. Libraries and plugins built against 4.x won't load into a 5.0 host.
+- CodeLogic 5 assemblies are strong-named (public key token `53a89305eedc5d98`). Recompile anything that references them.
 
 ## Breaking changes
 
@@ -40,6 +41,7 @@ The 4.x members still exist: `IsSuccess`, `IsFailure`, `Value`, `Error`, `Succes
 - **A `null` success value matches the `null` pattern.** `IsSuccess` is still `true`.
 - **`Result<Error>` has no implicit conversion.** Use `Result<Error>.Success(...)` or `Result<Error>.Failure(...)`.
 - **Results compare by value** (`==`, `Equals`).
+- **`ValueOrThrow` throws `ResultFailedException`**, which carries the `Error`. It derives from `InvalidOperationException`, so `catch` blocks keep working, but exact-type checks such as `Assert.Throws<InvalidOperationException>` need `ThrowsAny` or the new type.
 
 ### Framework events share a closed base
 
@@ -56,6 +58,7 @@ Timestamps, date folders in log paths, and upper-cased library and plugin IDs no
 
 - **Dependencies resolve inside the plugin.** A plugin no longer receives whatever assembly with a matching name is already loaded in the process. `CodeLogic` is always the host's copy; other dependencies come from the plugin's own folder first and from the host only when the plugin doesn't ship them. If the host and a plugin exchange types from another assembly (a shared contracts library, say) and the plugin ships its own copy, add that assembly's simple name to `PluginOptions.SharedAssemblies`.
 - **Plugin IDs must be unique.** `LoadPluginAsync` throws `InvalidOperationException` for an ID that is already loaded instead of replacing the running plugin. Use `ReloadPluginAsync` to replace one.
+- **`GetAllPlugins` / `GetLoadedPlugins` return snapshots** instead of live views, and `RegisterInProcessPluginAsync` is truly asynchronous: await it.
 - **`ResetAsync` disposes the registered `PluginManager`.** After a reset, create and register a new manager; the old one throws `ObjectDisposedException`.
 - **`ResetAsync` drops event subscriptions.** Every subscription on the runtime's event bus is removed by a reset, along with the shutdown handlers. Subscribe again after re-initializing.
 
@@ -84,4 +87,6 @@ Timestamps, date folders in log paths, and upper-cased library and plugin IDs no
 - Exhaustive `switch` over `Result<T>`, `Result`, `Error` and `FrameworkEvent`.
 - `Result<T>.Bind`, `Match`, `MapAsync`, `BindAsync`; `Result.Bind`, `Match`.
 - `Ok` (the success case of `Result`) and `Error.Empty`.
+- `Result.ThrowIfFailure()`, the non-generic counterpart of `ValueOrThrow`.
+- `CodeLogicEnvironment.FrameworkVersion`, `CodeLogicOptions.UseDevelopmentConfig` and `HealthReport.ToJson(includeDetails: false)` for public health endpoints.
 - Runtime-native async on .NET 11: shorter async stack traces and lower overhead, with no code changes.

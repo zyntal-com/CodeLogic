@@ -106,7 +106,7 @@ jobs:
           # nuget.org strips it from the package version, so it is provenance only —
           # it survives in the assembly InformationalVersion. Nothing is written back
           # to the repo; the version is composed at pack time via -p:Version.
-          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
+          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "5.0"
           $sha = '${{ github.sha }}'.Substring(0,7)
           if ('${{ github.ref_name }}'.StartsWith('prerelease/')) {
             $version = "$rootVer.${{ github.run_number }}-preview+$sha"
@@ -212,7 +212,7 @@ jobs:
           "@ | Set-Content 'artifacts/release-notes.md'
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           # Tag the commit that was built. Without this a new tag lands on the default branch.
           target_commitish: ${{ github.sha }}

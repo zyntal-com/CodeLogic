@@ -8,7 +8,7 @@ namespace CodeLogic.Core.Configuration;
 /// </summary>
 public interface IConfigurationManager
 {
-    // ─── Existing API (unchanged) ─────────────────────────────────────────────
+    // ─── Section API ───────────────────────────────────────────────────────
 
     /// <summary>Registers a config type for this component.</summary>
     void Register<T>(string? subConfigName = null) where T : ConfigModelBase, new();
@@ -54,7 +54,7 @@ public interface IConfigurationManager
     /// <summary>Returns the on-disk paths for all registered config files.</summary>
     IReadOnlyList<string> GetRegisteredFilePaths();
 
-    // ─── Discovery / schema / generic save (added in 3.3.0) ───────────────────
+    // ─── Discovery / schema / generic save ─────────────────────────────────
 
     /// <summary>Enumerate every registered config section. Useful for admin UIs.</summary>
     IReadOnlyList<ConfigSectionInfo> GetSections();

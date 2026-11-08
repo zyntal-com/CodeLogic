@@ -135,7 +135,8 @@ public static class FirstRunManager
         }
 
         // ── CodeLogic.Development.json — dev overrides (always generated) ────
-        // Used automatically when Debugger.IsAttached. Add to .gitignore for
+        // Used when the environment is Development (CODELOGIC_ENVIRONMENT, DOTNET_ENVIRONMENT
+        // or ASPNETCORE_ENVIRONMENT) or UseDevelopmentConfig is true. Add to .gitignore for
         // per-machine customization. Never committed to source control.
         var devConfigPath = Path.Combine(frameworkRoot, "Framework", "CodeLogic.Development.json");
         if (!File.Exists(devConfigPath))

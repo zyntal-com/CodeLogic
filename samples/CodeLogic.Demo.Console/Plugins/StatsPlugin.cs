@@ -28,14 +28,14 @@ public class StatsPlugin : IPlugin
 
     public PluginState State { get; private set; } = PluginState.Loaded;
 
-    // Running stats — thread-safe with Interlocked
+    // Running stats — guarded by _statsLock
     private int _total;
     private int _succeeded;
     private int _failed;
     private double _minMs = double.MaxValue;
     private double _maxMs;
     private double _totalMs;
-    private readonly object _statsLock = new();
+    private readonly Lock _statsLock = new();
 
     private StatsConfig _config = new();
     private IEventSubscription? _workSub;

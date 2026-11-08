@@ -1,5 +1,7 @@
 using CL = CodeLogic.CodeLogic;
+using CodeLogic.Core.Results;
 using CodeLogic.Demo.Web.Plugins;
+using CodeLogic.Framework.Application.Plugins;
 
 namespace CodeLogic.Demo.Web.Endpoints;
 
@@ -7,6 +9,7 @@ namespace CodeLogic.Demo.Web.Endpoints;
 // Plugin endpoints — exposes data collected by the demo plugins.
 //
 //   GET /plugins               → list all loaded plugins and their state
+//   GET /plugins/{id}          → one plugin (shows Result<T> → HTTP mapping)
 //   GET /plugins/request-stats → stats from RequestLoggerPlugin
 //   GET /plugins/notifications → recent notifications from NotificationPlugin
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,6 +18,23 @@ public static class PluginEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
+        // GET /plugins/{id} — FindPlugin returns Result<LoadedPlugin>; the switch must cover
+        // the value, every Error and the empty result, or the build fails.
+        app.MapGet("/plugins/{id}", (string id) => FindPlugin(id) switch
+        {
+            LoadedPlugin p => Results.Ok(new
+            {
+                id       = p.Manifest.Id,
+                name     = p.Manifest.Name,
+                version  = p.Manifest.Version,
+                state    = p.State.ToString(),
+                loadedAt = p.LoadedAt
+            }),
+            Error error => Results.Problem(error.Message, statusCode: StatusCodeFor(error), title: error.Code),
+            null        => Results.Problem("Empty result."),
+        })
+        .WithName("GetPlugin");
+
         // GET /plugins — list all loaded plugins
         app.MapGet("/plugins", () =>
         {
@@ -83,4 +103,29 @@ public static class PluginEndpoints
         })
         .WithName("Notifications");
     }
+
+    // Expected failures are Error values, not exceptions.
+    private static Result<LoadedPlugin> FindPlugin(string id)
+    {
+        var pm = CL.GetPluginManager();
+        if (pm is null)
+            return Error.Unavailable("plugins.no_manager", "No plugin manager registered.");
+
+        var plugin = pm.GetLoadedPlugins().FirstOrDefault(p => p.Manifest.Id == id);
+        return plugin is null
+            ? Error.NotFound("plugins.not_found", $"Plugin '{id}' is not loaded.")
+            : plugin;
+    }
+
+    // Error is a closed hierarchy, so this switch needs no default arm.
+    private static int StatusCodeFor(Error error) => error switch
+    {
+        NotFoundError     => StatusCodes.Status404NotFound,
+        ValidationError   => StatusCodes.Status422UnprocessableEntity,
+        UnauthorizedError => StatusCodes.Status401Unauthorized,
+        ConflictError     => StatusCodes.Status409Conflict,
+        TimeoutError      => StatusCodes.Status504GatewayTimeout,
+        UnavailableError  => StatusCodes.Status503ServiceUnavailable,
+        InternalError     => StatusCodes.Status500InternalServerError,
+    };
 }

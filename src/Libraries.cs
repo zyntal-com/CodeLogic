@@ -118,7 +118,7 @@ public static class Libraries
         return mgr?.GetAllLibraries() ?? [];
     }
 
-    // ── Config discovery shortcuts (3.4.1+) ──────────────────────────────────
+    // ── Config discovery shortcuts ─────────────────────────────────────────
 
     /// <summary>
     /// Every registered configuration section across every loaded library.

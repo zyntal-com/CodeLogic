@@ -128,15 +128,21 @@ public async Task<HealthStatus> HealthCheckAsync()
 ```csharp
 public sealed class HealthReport
 {
-    public HealthStatusLevel OverallStatus { get; }   // worst of all components
-    public IReadOnlyList<HealthEntry> Entries { get; }
-    public DateTime GeneratedAt { get; }
+    public bool IsHealthy { get; }                              // true only when every component is Healthy
+    public DateTime CheckedAt { get; }                          // UTC
+    public string MachineName { get; }
+    public string AppVersion { get; }
+    public Dictionary<string, HealthStatus> Libraries { get; }  // started libraries, keyed by ID
+    public Dictionary<string, HealthStatus> Plugins { get; }    // started plugins, keyed by ID
+    public HealthStatus? Application { get; }                   // null when no application is registered
 
-    public string ToConsoleString();   // colorized console output
-    public string ToJson();            // JSON with messages, machine name and app version
+    public string ToConsoleString();           // plain-text table
+    public string ToJson();                    // JSON with messages, machine name and app version
     public string ToJson(bool includeDetails); // false: overall flag and status levels only
 }
 ```
+
+A component that is `Degraded` makes `IsHealthy` false. An exception thrown by the application's `HealthCheckAsync` is reported as `Unhealthy`.
 
 ---
 
@@ -148,7 +154,23 @@ public sealed class HealthReport
 ./MyApp --health
 ```
 
-Outputs a formatted health report and exits.
+`--health` sets `InitializationResult.RunHealthCheck`. The host runs the normal startup, prints the report and exits:
+
+```csharp
+var init = await CodeLogic.InitializeAsync();
+if (init.ShouldExit) return;
+// ... load libraries, register the application ...
+await CodeLogic.ConfigureAsync();
+await CodeLogic.StartAsync();
+
+if (init.RunHealthCheck)
+{
+    var report = await CodeLogic.GetHealthAsync();
+    Console.WriteLine(report.ToConsoleString());
+    await CodeLogic.StopAsync();
+    return;
+}
+```
 
 ### Programmatically
 
@@ -160,8 +182,8 @@ Console.WriteLine(report.ToConsoleString());
 var json = report.ToJson();
 await File.WriteAllTextAsync("health.json", json);
 
-if (report.OverallStatus == HealthStatusLevel.Unhealthy)
-    Environment.Exit(1);
+if (!report.IsHealthy)
+    Environment.ExitCode = 1;
 ```
 
 ### In a web endpoint
@@ -185,11 +207,19 @@ Configure periodic health checks in `CodeLogic.json`:
 
 ```json
 {
-  "HealthChecks": {
-    "Enabled": true,
-    "IntervalSeconds": 60
+  "healthChecks": {
+    "enabled": true,
+    "intervalSeconds": 30
   }
 }
 ```
 
-When enabled, the framework publishes a `HealthCheckCompletedEvent` after each check. Subscribe to it to forward results to a monitoring service.
+Both values shown are the defaults. The timer starts after `StartAsync`. After each round the framework publishes a `HealthCheckCompletedEvent(ComponentId, IsHealthy, Message)` per library, plugin and the application, plus one with `ComponentId = "runtime"` for the overall result. Subscribe to it to forward results to a monitoring service:
+
+```csharp
+CodeLogic.GetEventBus().Subscribe<HealthCheckCompletedEvent>(e =>
+{
+    if (!e.IsHealthy)
+        alerts.Send($"{e.ComponentId}: {e.Message}");
+});
+```

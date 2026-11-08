@@ -47,11 +47,13 @@ public ApplicationManifest Manifest => new()
 
 ## ApplicationContext
 
-The framework creates a single `ApplicationContext` and passes it to all lifecycle phases. It is scoped to your application's own directory (`CodeLogic/Application/`) and provides the same services as `LibraryContext`:
+The framework creates a single `ApplicationContext` and passes it to all lifecycle phases. It is scoped to your application's own directory (`CodeLogic/Application/`, or `CodeLogicOptions.ApplicationRootPath` when set) and provides the same services as `LibraryContext`:
 
 ```csharp
 public sealed class ApplicationContext
 {
+    public string ApplicationId          { get; }  // from Manifest.Id
+
     // Directories (all created automatically on first run)
     public string ApplicationDirectory   { get; }  // CodeLogic/Application/
     public string ConfigDirectory        { get; }  // same as ApplicationDirectory
@@ -115,7 +117,7 @@ public async Task OnInitializeAsync(ApplicationContext context)
     var config = context.Configuration.Get<MyAppConfig>();
 
     // Libraries are fully running — access them freely
-    var db   = Libraries.Get<CL.Data.DataLibrary>();
+    var db   = Libraries.Get<CL.Data.Hosting.DataLibrary>();
     var mail = Libraries.Get<CL.Mail.MailLibrary>();
 
     // Set up application services using library services
@@ -141,7 +143,17 @@ private Task _backgroundWork = Task.CompletedTask;
 public Task OnStartAsync(ApplicationContext context)
 {
     // Subscribe to library events
-    context.Events.Subscribe<CL.SystemStats.SystemSnapshotTakenEvent>(OnSnapshot);
+    context.Events.Subscribe<CL.SystemStats.Events.SystemSnapshotTakenEvent>(OnSnapshot);
+
+    // Framework events share the closed base FrameworkEvent
+    context.Events.Subscribe<FrameworkEvent>(e =>
+    {
+        switch (e)
+        {
+            case LibraryFailedEvent f: context.Logger.Error($"{f.LibraryName} failed", f.Error); break;
+            case ConfigApplyFailedEvent c: context.Logger.Warning($"{c.ComponentId}/{c.SectionName} not applied"); break;
+        }
+    });
 
     // Start background processing
     _backgroundWork = RunMainLoopAsync(_cts.Token);
@@ -270,7 +282,8 @@ public sealed class MyApp : IApplication
     public async Task OnInitializeAsync(ApplicationContext context)
     {
         _ctx  = context;
-        var db = Libraries.Get<CL.Data.DataLibrary>();
+        var db = Libraries.Get<CL.Data.Hosting.DataLibrary>()
+            ?? throw new InvalidOperationException("CL.Data is not loaded");
         _users = new UserService(db, context.Logger);
         await _users.InitializeAsync();
     }

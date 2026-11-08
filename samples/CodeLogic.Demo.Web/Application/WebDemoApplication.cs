@@ -10,7 +10,7 @@ namespace CodeLogic.Demo.Web.Application;
 //
 // Logging:
 //   context.Logger writes to: data/app/logs/application.log
-//   Log level from:           CodeLogic.Development.json (debugger) or CodeLogic.json
+//   Log level from:           CodeLogic.Development.json (Development environment) or CodeLogic.json
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class WebDemoApplication : IApplication
