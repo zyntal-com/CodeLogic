@@ -468,7 +468,7 @@ public sealed class LibraryManager : IDisposable
     /// </summary>
     public IEnumerable<LoadedLibrary> GetLoadedLibraries() => Array.AsReadOnly(_libraries);
 
-    // ── Config discovery (3.4.1+) ────────────────────────────────────────────
+    // ── Config discovery ───────────────────────────────────────────────────
 
     /// <summary>
     /// Enumerate every registered configuration section across every loaded
@@ -606,7 +606,7 @@ public sealed class LibraryManager : IDisposable
         }
     }
 
-    // ── Config hot reload (4.9.0+) ───────────────────────────────────────────
+    // ── Config hot reload ──────────────────────────────────────────────────
 
     /// <summary>
     /// Starts watching <c>Libraries/*/config*.json</c> when <see cref="EnableConfigHotReload"/> is true.

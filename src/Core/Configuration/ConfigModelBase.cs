@@ -41,16 +41,16 @@ public abstract class ConfigModelBase
 }
 
 /// <summary>
-/// Marks a configuration model with a section name used in file naming.
-/// Example: [ConfigSection("database")] → config.database.json
-/// Without this attribute, the file name is config.json.
+/// Describes a configuration model for schemas and admin UIs (name, description, version).
+/// It does not affect the file name: that comes from <c>Register&lt;T&gt;(subConfigName)</c>,
+/// e.g. <c>Register&lt;DatabaseConfig&gt;("database")</c> → <c>config.database.json</c>.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class ConfigSectionAttribute : Attribute
 {
     /// <summary>
-    /// The section name used as a suffix in the config file name.
-    /// Example: "database" → config file is named <c>config.database.json</c>.
+    /// The section's display name. Informational; the file name comes from the name passed to
+    /// <c>Register&lt;T&gt;</c>.
     /// </summary>
     public string SectionName { get; }
 
@@ -69,7 +69,7 @@ public sealed class ConfigSectionAttribute : Attribute
     /// <summary>
     /// Initializes the attribute with a section name.
     /// </summary>
-    /// <param name="sectionName">The suffix for the config file name (e.g., "database").</param>
+    /// <param name="sectionName">The section name (informational; it does not set the file name).</param>
     public ConfigSectionAttribute(string sectionName)
     {
         SectionName = sectionName;
