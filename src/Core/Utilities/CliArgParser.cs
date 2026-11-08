@@ -29,6 +29,13 @@ public sealed class ParsedCliArgs
 public static class CliArgParser
 {
     /// <summary>
+    /// The framework's own flags, without the leading <c>--</c>. They are never startup parameters
+    /// (<c>GetStartupParameter</c> does not see them).
+    /// </summary>
+    internal static readonly string[] FrameworkFlags =
+        ["generate-configs-force", "generate-configs", "exit-after-generate", "dry-run", "version", "info", "health"];
+
+    /// <summary>
     /// Parses Environment.GetCommandLineArgs() (skips argv[0] which is the exe path).
     /// </summary>
     public static ParsedCliArgs Parse()

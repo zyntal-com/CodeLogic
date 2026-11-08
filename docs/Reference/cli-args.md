@@ -163,8 +163,8 @@ var key  = CodeLogic.GetRequiredStartupParameter<string>("api-key");   // throws
 - Supported types: `string`, `bool`, enums (case-insensitive), `Guid`, `TimeSpan`, and the numeric types,
   parsed with the invariant culture. A value that does not convert throws `InvalidOperationException`
   (without the value, which may be a secret).
-- `version`, `info`, `health`, `dry-run`, `generate-configs` and `generate-configs-force` are reserved
-  and never returned as parameters.
+- The framework flags (`version`, `info`, `health`, `dry-run`, `generate-configs`, `generate-configs-force` and
+  `exit-after-generate`) are reserved and never returned as parameters.
 
 ---
 

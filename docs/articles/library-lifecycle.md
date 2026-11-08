@@ -199,7 +199,11 @@ StopAsync() - reverse start order:
 
 ## IDisposable
 
-`ILibrary` extends `IDisposable`, but the framework does not call `Dispose()`: `OnStopAsync` is the shutdown hook. Make `Dispose` safe to call more than once, for code that owns the instance directly (tests, for example):
+`ILibrary` extends `IDisposable`. `OnStopAsync` is the shutdown hook; after it, the framework disposes every library once, in
+reverse dependency order: `StopAsync()` and `ResetAsync()` call `DisposeAsync()` when the library also implements
+`IAsyncDisposable`, otherwise `Dispose()`. A library that failed to start, or never started, is disposed too, so release
+everything `OnConfigureAsync` or `OnInitializeAsync` acquired. Make `Dispose` safe to call more than once and after
+`OnStopAsync` (code that owns the instance directly, such as tests, may call it again):
 
 ```csharp
 public void Dispose()

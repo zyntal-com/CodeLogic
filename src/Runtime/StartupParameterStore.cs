@@ -9,10 +9,7 @@ namespace CodeLogic;
 internal sealed class StartupParameterStore
 {
     private static readonly HashSet<string> ReservedFlags =
-    [
-        with(StringComparer.OrdinalIgnoreCase),
-        "generate-configs", "generate-configs-force", "dry-run", "version", "info", "health"
-    ];
+        [with(StringComparer.OrdinalIgnoreCase), .. Core.Utilities.CliArgParser.FrameworkFlags];
 
     private readonly IReadOnlyDictionary<string, string> _commandLine;
     private readonly IReadOnlyDictionary<string, string> _environment;

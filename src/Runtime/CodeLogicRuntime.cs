@@ -366,7 +366,12 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             }
 
             if (_libraryManager != null)
+            {
                 await _libraryManager.StopAllAsync();
+                // Stopped libraries are not started again (a new start needs a new initialization), so they are
+                // disposed now: a host that only calls StopAsync before exiting still releases their resources.
+                await _libraryManager.DisposeLibrariesAsync();
+            }
 
             _frameworkLogger.Info("Framework stopped");
         }
@@ -409,6 +414,7 @@ public sealed class CodeLogicRuntime : ICodeLogicRuntime
             if (_libraryManager != null)
             {
                 try { await _libraryManager.StopAllAsync(); } catch { }
+                try { await _libraryManager.DisposeLibrariesAsync(); } catch { }
                 _libraryManager.Dispose();
             }
 

@@ -8,6 +8,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 
 ### Breaking
 
+- **Libraries are disposed.** `StopAsync()` and `ResetAsync()` now dispose every library after stopping it, once, in reverse dependency order: `DisposeAsync()` when the library implements `IAsyncDisposable`, otherwise `Dispose()`. Libraries that failed or never started are disposed too. Before, `ILibrary` required `IDisposable` but the framework never called it. Make `Dispose` safe after `OnStopAsync`. New `LibraryManager.DisposeLibrariesAsync()` and `LoadedLibrary.IsDisposed`; `LibraryManager.Dispose()` disposes the libraries not disposed yet.
+
 - **Strong-named** with the CodeLogic key (public key token `53a89305eedc5d98`), shared with CodeLogic.Libs. Assemblies that reference CodeLogic now bind to a strong-named identity.
 
 - **Targets `net11.0` only** (was `net10.0`).
@@ -130,6 +132,9 @@ continues on the `support/4.x` branch (published from `release/4.x`).
   is collected once nothing references the plugin's types.
 
 ### Fixed
+
+- **`exit-after-generate` is no longer a startup parameter.** `GetStartupParameter("exit-after-generate")` returned `"true"` because the flag was missing from the reserved names; the framework flags now come from one list in `CliArgParser`.
+- **Library directories survive an ID casing change.** When a library's `Libraries/CL.*` directory is missing but one differs only in letter case (a case-sensitive file system after a library changed the casing of its ID), CodeLogic renames it to the new name, so the library keeps its config, data and logs.
 
 - **Plugin lifecycle is serialized.** Load, register, unload, reload, dispose and hot reload run one at
   a time; readers and health checks work on snapshots, so hot reload can no longer corrupt the plugin

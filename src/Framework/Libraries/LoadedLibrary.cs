@@ -29,6 +29,9 @@ public sealed class LoadedLibrary
     /// <summary>Current lifecycle state.</summary>
     public LibraryState State { get; set; } = LibraryState.Loaded;
 
+    /// <summary>True once the framework has disposed <see cref="Instance"/> (it is disposed only once).</summary>
+    public bool IsDisposed { get; internal set; }
+
     /// <summary>Exception if State == Failed.</summary>
     public Exception? FailureException { get; set; }
 
