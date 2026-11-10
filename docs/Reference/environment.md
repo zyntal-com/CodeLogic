@@ -12,7 +12,7 @@ public static class CodeLogicEnvironment
     public static string  MachineName      { get; }                 // Environment.MachineName
     public static string  AppRootPath      { get; }                 // AppContext.BaseDirectory
     public static string  AppVersion       { get; internal set; }   // set during InitializeAsync
-    public static string  FrameworkVersion { get; }                 // CodeLogic assembly version, e.g. "5.0.42-preview"
+    public static string  FrameworkVersion { get; }                 // CodeLogic assembly version, e.g. "5.0.42"
     public static bool    IsDebugging      { get; }                 // Debugger.IsAttached
     public static string? EnvironmentName  { get; }                 // CODELOGIC_ / DOTNET_ / ASPNETCORE_ENVIRONMENT
     public static bool    IsDevelopment    { get; }                 // EnvironmentName == "Development"
@@ -66,7 +66,7 @@ metadata (for example `5.0.42` or `5.0.42-preview`). It appears in `--version` a
 the default of `framework.version` in `CodeLogic.json`.
 
 ```csharp
-string framework = CodeLogicEnvironment.FrameworkVersion;  // "5.0.42-preview"
+string framework = CodeLogicEnvironment.FrameworkVersion;  // "5.0.42"
 ```
 
 ### IsDebugging

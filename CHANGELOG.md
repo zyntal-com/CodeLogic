@@ -2,6 +2,9 @@
 
 ## 5.0.x
 
+**5.0 is stable** (first stable release 2026-11-10, the day .NET 11.0.0 was released). The `5.0.x-preview` packages
+published before that were built with .NET 11 release candidates; everything below is in the stable release.
+
 5.0 targets .NET 11 and uses C# 15 in the public API. Read
 [Migrating to 5.0](docs/articles/migrating-to-5.md) before upgrading. The 4.x line (.NET 10)
 continues on the `support/4.x` branch (published from `release/4.x`).

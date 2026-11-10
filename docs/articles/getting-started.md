@@ -8,10 +8,10 @@ This guide walks you through installing CodeLogic 5, understanding the boot flow
 
 ## Installation
 
-Install the package from nuget.org (5.0 is in preview):
+Install the package from nuget.org:
 
 ```sh
-dotnet add package CodeLogic --prerelease
+dotnet add package CodeLogic
 ```
 
 Or, to build against a local clone, add a project reference:
