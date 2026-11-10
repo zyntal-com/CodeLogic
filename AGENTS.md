@@ -44,8 +44,8 @@ dotnet build samples/CodeLogic.Demo.Web -c Release
 dotnet run -c Release --project benchmarks/CodeLogic.Benchmarks -- --filter '*'   # see benchmarks/README.md
 ```
 
-- `global.json` pins the SDK: the .NET 11 SDK on `main` (prerelease allowed until GA,
-  `rollForward: latestFeature`). CI installs the SDK from `global.json`.
+- `global.json` pins the SDK: the released .NET 11 SDK on `main` (`11.0.100`, `rollForward: latestFeature`,
+  prerelease SDKs not accepted; .NET 11.0.0 was released on 2026-11-10). CI installs the SDK from `global.json`.
 - `src` builds with `AnalysisLevel=latest-recommended`. Deliberate exceptions are in
   `.editorconfig`, each with its reason. Fix new warnings instead of suppressing them.
 - **Before changing a public API, check the downstream build.** Pack locally and build

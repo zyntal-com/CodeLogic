@@ -22,7 +22,7 @@ CodeLogic gives you a **structured lifecycle** out of the box:
 dotnet add package CodeLogic
 ```
 
-While 5.0 is in preview, add `--prerelease`. Without it you get the latest stable 4.9.x (.NET 10).
+This installs CodeLogic 5.0, which needs .NET 11. On .NET 10, install the 4.9 line: `dotnet add package CodeLogic --version "4.9.*"`.
 
 ## What's new in 5.0
 

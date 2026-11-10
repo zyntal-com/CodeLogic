@@ -2,6 +2,9 @@
 
 ## 5.0.x
 
+**5.0 is stable** (first stable release 2026-11-10, the day .NET 11.0.0 was released). The `5.0.x-preview` packages
+published before that were built with .NET 11 release candidates; everything below is in the stable release.
+
 5.0 targets .NET 11 and uses C# 15 in the public API. Read
 [Migrating to 5.0](docs/articles/migrating-to-5.md) before upgrading. The 4.x line (.NET 10)
 continues on the `support/4.x` branch (published from `release/4.x`).
@@ -120,7 +123,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - `object` locks are replaced by `System.Threading.Lock`, and `JsonSerializerOptions`
   instances are cached.
 - `src` builds with `AnalysisLevel=latest-recommended`.
-- `global.json` pins the .NET 11 SDK, and CI installs it from there.
+- `global.json` pins the released .NET 11 SDK (`11.0.100` or a later 11.0 feature band; prerelease SDKs are not
+  accepted), and CI installs it from there. The previews before 2026-11-10 were built with release candidates.
 - CI also builds `samples/CodeLogic.Demo.Console` and `samples/CodeLogic.Demo.Web`, so public API
   breaks show up in pull requests.
 - `--version`, `--info`, the generated `CodeLogic.json`, the first-run marker and the
