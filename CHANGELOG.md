@@ -120,7 +120,8 @@ continues on the `support/4.x` branch (published from `release/4.x`).
 - `object` locks are replaced by `System.Threading.Lock`, and `JsonSerializerOptions`
   instances are cached.
 - `src` builds with `AnalysisLevel=latest-recommended`.
-- `global.json` pins the .NET 11 SDK, and CI installs it from there.
+- `global.json` pins the released .NET 11 SDK (`11.0.100` or a later 11.0 feature band; prerelease SDKs are not
+  accepted), and CI installs it from there. The previews before 2026-11-10 were built with release candidates.
 - CI also builds `samples/CodeLogic.Demo.Console` and `samples/CodeLogic.Demo.Web`, so public API
   breaks show up in pull requests.
 - `--version`, `--info`, the generated `CodeLogic.json`, the first-run marker and the
